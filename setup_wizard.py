@@ -97,7 +97,8 @@ SYNTH_MODELS = ["llama3:8b", "mistral:7b", "gemma2:9b"]
 # ── Reusable widgets ──────────────────────────────────────────────────────────
 
 def _label(parent, text, font=FONT_BODY, color=FG, **kw):
-    return tk.Label(parent, text=text, font=font, fg=color, bg=parent["bg"], **kw)
+    kw.setdefault("bg", parent["bg"])
+    return tk.Label(parent, text=text, font=font, fg=color, **kw)
 
 def _divider(parent):
     tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=32, pady=12)
