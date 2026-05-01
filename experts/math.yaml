@@ -5,7 +5,7 @@
 # Good choices: qwen2.5-math:7b, mathstral:7b, deepseek-r1:7b, phi4:14b
 
 specialty: math
-model: qwen2.5-math:7b
+model: llama3.2:latest
 http_port: 8001
 dht_port: 8468
 is_bootstrap: true

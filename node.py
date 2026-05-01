@@ -56,7 +56,7 @@ BOOTSTRAP_HOST = "127.0.0.1"
 BOOTSTRAP_PORT = 8468          # math node's DHT port -- the network entry point
 
 QUERY_TIMEOUT  = 60            # seconds to wait for a peer's /query response
-SYNTHESIS_MODEL = "llama3:8b"  # model used to blend all expert answers
+SYNTHESIS_MODEL = "llama3.2:latest"  # model used to blend all expert answers
                                # any node can use a different one via its yaml
 
 # ── Expert Node ───────────────────────────────────────────────────────────────

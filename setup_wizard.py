@@ -124,7 +124,7 @@ class SetupWizard(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("MoE Network Setup")
-        self.geometry("620x540")
+        self.geometry("760x640")
         self.resizable(False, False)
         self.configure(bg=BG)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -229,7 +229,7 @@ class Page(tk.Frame):
         tk.Frame(self, bg=BG, height=28).pack()
         _label(self, title, FONT_H1).pack(anchor="w", padx=32)
         if subtitle:
-            _label(self, subtitle, FONT_BODY, FG_DIM, wraplength=540, justify="left").pack(
+            _label(self, subtitle, FONT_BODY, FG_DIM, wraplength=660, justify="left").pack(
                 anchor="w", padx=32, pady=(4, 0))
 
 
@@ -489,7 +489,7 @@ class DonePage(Page):
         else:
             tip = "Look for the icon in your system tray."
 
-        _label(self, tip, FONT_BODY, FG_DIM, wraplength=480, justify="center").pack(pady=8)
+        _label(self, tip, FONT_BODY, FG_DIM, wraplength=600, justify="center").pack(pady=8)
 
         tk.Frame(self, bg=BG, height=24).pack()
 
