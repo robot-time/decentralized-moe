@@ -28,13 +28,16 @@ ROOT = Path(__file__).parent
 def generate_icon() -> Path:
     """
     Generate the app icon from code (no separate icon file needed).
-    Produces icon.ico (Windows) and icon.png (macOS/Linux).
+    Produces icon.png (all platforms) and icon.ico (Windows only).
+    macOS uses the png directly -- no .icns required.
     """
     try:
         from PIL import Image, ImageDraw
     except ImportError:
         print("Pillow not found -- skipping icon generation")
         return None
+
+    resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 
     SIZE = 256
     img  = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
@@ -43,7 +46,7 @@ def generate_icon() -> Path:
     # Background circle
     d.ellipse([4, 4, SIZE - 4, SIZE - 4], fill=(30, 41, 59, 255))
 
-    # Network nodes
+    # Network nodes (one per expert)
     cx, cy = SIZE // 2, SIZE // 2
     r = 72
     positions = [
@@ -63,36 +66,18 @@ def generate_icon() -> Path:
     assets = ROOT / "assets"
     assets.mkdir(exist_ok=True)
 
+    # Save PNG (used on macOS and Linux)
     png_path = assets / "icon.png"
     img.save(png_path)
 
-    # Windows .ico (multiple sizes)
+    # Save ICO (Windows -- multiple sizes baked in)
     ico_path = assets / "icon.ico"
     sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
-    icons = [img.resize(s, Image.LANCZOS) for s in sizes]
+    icons = [img.resize(s, resample) for s in sizes]
     icons[0].save(ico_path, format="ICO", sizes=sizes, append_images=icons[1:])
-
-    # macOS .icns via iconutil (only available on macOS)
-    if sys.platform == "darwin":
-        _make_icns(img, assets)
 
     print(f"Icons generated in {assets}/")
     return ico_path if sys.platform == "win32" else png_path
-
-
-def _make_icns(img: "Image.Image", assets: Path) -> None:
-    """Create a .icns file for macOS using the iconutil command."""
-    iconset = assets / "icon.iconset"
-    iconset.mkdir(exist_ok=True)
-    for size in [16, 32, 64, 128, 256, 512, 1024]:
-        for scale, suffix in [(1, ""), (2, "@2x")]:
-            px = size * scale
-            resized = img.resize((px, px), Image.LANCZOS)
-            resized.save(iconset / f"icon_{size}x{size}{suffix}.png")
-    subprocess.run(
-        ["iconutil", "-c", "icns", str(iconset), "-o", str(assets / "icon.icns")],
-        check=False,
-    )
 
 
 def build() -> None:
