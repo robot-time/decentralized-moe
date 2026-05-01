@@ -30,7 +30,7 @@ import requests
 
 # Change this to your GitHub repo after pushing the project there.
 # Format: "username/repo-name"
-GITHUB_REPO = "your-username/decentralized-moe"
+GITHUB_REPO = "robot-time/decentralized-moe"
 
 BASE_DIR    = Path(__file__).parent
 VERSION_FILE = BASE_DIR / "version.txt"
