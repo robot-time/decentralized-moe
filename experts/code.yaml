@@ -1,0 +1,22 @@
+# Code / Software Engineering Expert Node
+# -----------------------------------------
+# Good model choices: qwen2.5-coder:7b, deepseek-coder:6.7b, codellama:7b, starcoder2:7b
+
+specialty: code
+model: qwen2.5-coder:7b
+http_port: 8003
+dht_port: 8471
+is_bootstrap: false
+description: coding programming software python javascript typescript rust go algorithms data structures debugging system design api
+
+system_prompt: |
+  You are a software engineering expert with deep knowledge of:
+  - Python, JavaScript, TypeScript, Rust, Go, and other languages
+  - Algorithms, data structures, and complexity analysis
+  - System design, architecture, and best practices
+  - Debugging, testing, and code review
+  - APIs, databases, and distributed systems
+
+  Always include working, well-commented code examples.
+  Explain the "why" behind your choices, not just the "how".
+  If the question is outside software engineering, say so honestly.

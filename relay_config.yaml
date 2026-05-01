@@ -1,0 +1,39 @@
+# relay_config.yaml -- Configuration for the remote relay feature
+# ----------------------------------------------------------------
+# The relay lets you send queries to your local MoE network from
+# anywhere (phone, another computer, etc.) without opening any
+# inbound ports on your machine.
+#
+# How it works:
+#   1. Your local app (tray.py) polls the relay server over HTTPS
+#   2. You send a message from your phone to the relay server
+#   3. The relay forwards it down to your local app
+#   4. Your machine processes it locally with the MoE network
+#   5. The answer travels back the same way
+#   Your files and models never leave your machine.
+#
+# Setup:
+#   1. Deploy relay/server.py somewhere public (see relay/README below)
+#   2. Set relay_url to that server's URL
+#   3. Set api_key to a strong random secret (same in server + here)
+#   4. Set enabled: true
+#   5. Restart tray.py
+
+enabled: false
+
+relay_url: "https://your-relay.example.com"   # URL of your relay/server.py
+api_key:   "change-me-to-a-strong-secret"     # Must match the server's API_KEY
+
+# Which local node to use for processing remote queries.
+# Points to the first node that responds to /health.
+# Change the port if you want a specific node to handle remote queries.
+local_node_url: "http://localhost:8001"
+
+# Keep-awake: prevent the machine from sleeping while the relay is connected.
+# When enabled, uses the OS keep-awake API (caffeinate / SetThreadExecutionState).
+keep_awake: true
+
+# How long (seconds) the server holds each long-poll open before returning
+# an empty response (the client immediately re-polls). Must be less than
+# any proxy/load-balancer timeout on your hosting platform.
+poll_timeout: 30

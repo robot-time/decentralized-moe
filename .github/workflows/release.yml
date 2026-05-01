@@ -1,0 +1,135 @@
+# .github/workflows/release.yml
+# ================================
+# Automatically builds the app for Windows, macOS, and Linux
+# whenever you push a version tag (e.g. v1.1.0).
+#
+# How to trigger a release:
+#   git tag v1.1.0
+#   git push origin v1.1.0
+#
+# The workflow:
+#   1. Builds MoE-Network.exe / MoE-Network.app / MoE-Network on each OS
+#   2. Zips each build
+#   3. Creates a GitHub Release with all three zips as download assets
+#   4. Bumps version.txt in the repo to match the tag
+#
+# Friends download the zip for their OS, unzip, double-click. Done.
+# The app checks this repo's releases for updates automatically.
+
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"   # trigger on any tag like v1.0.0, v1.2.3-beta, etc.
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: MoE-Network.exe
+            zip_name: MoE-Network-Windows.zip
+
+          - os: macos-latest
+            artifact_name: MoE-Network.app
+            zip_name: MoE-Network-macOS.zip
+
+          - os: ubuntu-latest
+            artifact_name: MoE-Network
+            zip_name: MoE-Network-Linux.zip
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # Linux needs these system libraries for pystray (GTK tray)
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libgirepository1.0-dev gir1.2-appindicator3-0.1
+
+      - name: Write version.txt from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"   # strip leading "v"
+          echo "$VERSION" > version.txt
+          echo "Building version $VERSION"
+
+      - name: Build with PyInstaller
+        run: python build.py
+
+      # macOS: zip the .app bundle
+      - name: Zip macOS app
+        if: matrix.os == 'macos-latest'
+        run: cd dist && zip -r ../${{ matrix.zip_name }} MoE-Network.app
+
+      # Windows: zip the .exe
+      - name: Zip Windows exe
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: Compress-Archive -Path dist\MoE-Network.exe -DestinationPath ${{ matrix.zip_name }}
+
+      # Linux: zip the binary
+      - name: Zip Linux binary
+        if: matrix.os == 'ubuntu-latest'
+        run: cd dist && zip -r ../${{ matrix.zip_name }} MoE-Network
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.zip_name }}
+          path: ${{ matrix.zip_name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release with all platform builds
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "MoE Network ${{ github.ref_name }}"
+          body: |
+            ## MoE Network ${{ github.ref_name }}
+
+            Download the version for your operating system below.
+
+            ### Install
+            1. Download the zip for your OS
+            2. Unzip it
+            3. **Make sure [Ollama](https://ollama.com/download) is installed**
+            4. Double-click `MoE-Network` (macOS/Linux) or `MoE-Network.exe` (Windows)
+            5. Follow the setup wizard -- it takes about 5 minutes
+
+            ### Notes
+            - No admin / root permissions needed
+            - macOS: if you see "unidentified developer", right-click > Open
+            - Linux: `chmod +x MoE-Network` then `./MoE-Network`
+          files: |
+            MoE-Network-Windows.zip/MoE-Network-Windows.zip
+            MoE-Network-macOS.zip/MoE-Network-macOS.zip
+            MoE-Network-Linux.zip/MoE-Network-Linux.zip
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

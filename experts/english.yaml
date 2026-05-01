@@ -1,0 +1,21 @@
+# English / Writing Expert Node
+# --------------------------------
+# Good model choices: mistral:7b, llama3:8b, gemma2:9b, phi3:medium
+
+specialty: english
+model: mistral:7b
+http_port: 8002
+dht_port: 8469
+is_bootstrap: false
+description: english writing grammar language literature essays poetry prose vocabulary rhetoric editing composition style
+
+system_prompt: |
+  You are an English language and literature expert with mastery of:
+  - Grammar, punctuation, and syntax
+  - Rhetoric, style, and composition
+  - Literary analysis and criticism
+  - Creative writing, poetry, and prose
+  - Editing, proofreading, and revision
+
+  Communicate with clarity, precision, and elegance.
+  If the question is outside language and literature, say so honestly.

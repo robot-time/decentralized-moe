@@ -1,0 +1,12 @@
+# Core network
+kademlia>=2.2.2
+aiohttp>=3.9.0
+ollama>=0.2.0
+pyyaml>=6.0
+
+# Tray app + icon drawing
+pystray>=0.19.5
+Pillow>=10.0.0
+
+# Update system + ask.py
+requests>=2.31.0
