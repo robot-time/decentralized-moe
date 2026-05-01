@@ -1,562 +1,515 @@
 """
 setup_wizard.py -- First-Run Setup Wizard
 ==========================================
-A friendly GUI wizard that runs once when the app is first opened.
-Uses only tkinter (built into Python -- no extra install needed).
+Runs once on first launch. Modern black and white UI.
+After finishing, writes a sentinel file so it never opens again.
+The single-instance lock in main.py prevents it stacking up.
 
 Steps:
   1. Welcome + Ollama check
-  2. Choose experts (which specialties to run, which model for each)
-  3. Pull models (live progress)
-  4. Done -- launches the tray app
-
-All files are written to the user's home directory. No admin needed.
+  2. Pick experts and models
+  3. Download models (live log)
+  4. Done -- tray app launches automatically
 """
 
 import shutil
-import subprocess
 import sys
 import threading
 import webbrowser
-from pathlib import Path
+from tkinter import font as tkfont
 from tkinter import ttk
 import tkinter as tk
-from typing import Callable
 
 import yaml
 
-from app_paths import (
-    APP_DIR, EXPERTS_DIR, FIRST_RUN_SENTINEL,
-    copy_default_experts, ensure_dirs,
-)
+from app_paths import APP_DIR, EXPERTS_DIR, FIRST_RUN_SENTINEL, ensure_dirs
 
-# ── Expert definitions ────────────────────────────────────────────────────────
-# Each expert has a display name, port, and a list of recommended Ollama models.
-# The user picks one model per expert in step 2.
+# ── Palette ───────────────────────────────────────────────────────────────────
+BG        = "#0d0d0d"   # near-black background
+SURFACE   = "#1a1a1a"   # card / panel
+BORDER    = "#2e2e2e"   # subtle border
+FG        = "#ffffff"   # primary text
+FG_DIM    = "#888888"   # secondary text
+BTN_FG    = "#000000"   # text on white button
+BTN_BG    = "#ffffff"   # primary button
+BTN_SEC   = "#1a1a1a"   # secondary button
+GOOD      = "#22c55e"   # success green
+BAD       = "#ef4444"   # error red
 
-EXPERT_DEFINITIONS = [
+FONT_H1   = ("Helvetica", 22, "bold")
+FONT_H2   = ("Helvetica", 14, "bold")
+FONT_BODY = ("Helvetica", 12)
+FONT_SMALL= ("Helvetica", 10)
+FONT_MONO = ("Courier", 10)
+
+# ── Expert catalogue ──────────────────────────────────────────────────────────
+
+EXPERTS = [
     {
-        "specialty":   "math",
-        "label":       "Math",
-        "description": "Algebra, calculus, statistics, proofs",
-        "http_port":   8001,
-        "dht_port":    8468,
-        "is_bootstrap": True,
-        "models": [
-            "qwen2.5-math:7b",
-            "mathstral:7b",
-            "deepseek-r1:7b",
-            "llama3:8b",
-        ],
-        "domain_desc": "mathematics algebra calculus equations geometry statistics probability proofs",
-        "system_prompt": (
-            "You are a mathematics expert specializing in algebra, calculus, geometry, "
-            "statistics, and probability. Always show step-by-step working. Be rigorous."
-        ),
+        "specialty": "math",
+        "label":     "Math",
+        "desc":      "Algebra, calculus, statistics, proofs",
+        "http_port": 8001,
+        "dht_port":  8468,
+        "bootstrap": True,
+        "models":    ["qwen2.5-math:7b", "mathstral:7b", "deepseek-r1:7b", "llama3:8b"],
+        "domain":    "mathematics algebra calculus equations geometry statistics probability proofs",
+        "prompt":    "You are a mathematics expert. Show step-by-step working. Be rigorous.",
     },
     {
-        "specialty":   "english",
-        "label":       "English / Writing",
-        "description": "Grammar, writing, literature, editing",
-        "http_port":   8002,
-        "dht_port":    8469,
-        "is_bootstrap": False,
-        "models": [
-            "mistral:7b",
-            "llama3:8b",
-            "gemma2:9b",
-            "phi3:medium",
-        ],
-        "domain_desc": "english writing grammar language literature essays poetry prose vocabulary rhetoric editing",
-        "system_prompt": (
-            "You are an English language and literature expert. You excel at grammar, "
-            "style, composition, literary analysis, creative writing, and editing. "
-            "Communicate with clarity and elegance."
-        ),
+        "specialty": "english",
+        "label":     "English / Writing",
+        "desc":      "Grammar, writing, literature, editing",
+        "http_port": 8002,
+        "dht_port":  8469,
+        "bootstrap": False,
+        "models":    ["mistral:7b", "llama3:8b", "gemma2:9b", "phi3:medium"],
+        "domain":    "english writing grammar language literature essays poetry prose vocabulary",
+        "prompt":    "You are an English language expert. Write with clarity and elegance.",
     },
     {
-        "specialty":   "code",
-        "label":       "Coding",
-        "description": "Programming, debugging, algorithms",
-        "http_port":   8003,
-        "dht_port":    8471,
-        "is_bootstrap": False,
-        "models": [
-            "qwen2.5-coder:7b",
-            "deepseek-coder:6.7b",
-            "codellama:7b",
-            "starcoder2:7b",
-        ],
-        "domain_desc": "coding programming software python javascript debugging algorithms data structures system design",
-        "system_prompt": (
-            "You are a software engineering expert. You write clean, efficient, well-commented "
-            "code in any language. Always include working code examples with clear explanations."
-        ),
+        "specialty": "code",
+        "label":     "Coding",
+        "desc":      "Programming, debugging, algorithms",
+        "http_port": 8003,
+        "dht_port":  8471,
+        "bootstrap": False,
+        "models":    ["qwen2.5-coder:7b", "deepseek-coder:6.7b", "codellama:7b"],
+        "domain":    "coding programming software python javascript debugging algorithms",
+        "prompt":    "You are a software engineering expert. Always include working code examples.",
     },
     {
-        "specialty":   "science",
-        "label":       "Science",
-        "description": "Physics, chemistry, biology",
-        "http_port":   8004,
-        "dht_port":    8472,
-        "is_bootstrap": False,
-        "models": [
-            "llama3:8b",
-            "gemma2:9b",
-            "mistral:7b",
-            "phi4:14b",
-        ],
-        "domain_desc": "science physics chemistry biology research experiments scientific method empirical evidence",
-        "system_prompt": (
-            "You are a natural sciences expert covering physics, chemistry, and biology. "
-            "Ground your answers in empirical evidence and scientific consensus."
-        ),
+        "specialty": "science",
+        "label":     "Science",
+        "desc":      "Physics, chemistry, biology",
+        "http_port": 8004,
+        "dht_port":  8472,
+        "bootstrap": False,
+        "models":    ["llama3:8b", "gemma2:9b", "mistral:7b"],
+        "domain":    "science physics chemistry biology research experiments",
+        "prompt":    "You are a natural sciences expert. Ground answers in empirical evidence.",
     },
 ]
 
-SYNTHESIS_MODEL_OPTIONS = ["llama3:8b", "mistral:7b", "gemma2:9b", "phi4:14b"]
-
-# Colours
-BG       = "#1e1e2e"
-FG       = "#cdd6f4"
-ACCENT   = "#89b4fa"
-SUCCESS  = "#a6e3a1"
-WARNING  = "#f9e2af"
-ERROR    = "#f38ba8"
-CARD_BG  = "#313244"
-BTN_BG   = "#45475a"
+SYNTH_MODELS = ["llama3:8b", "mistral:7b", "gemma2:9b"]
 
 
-# ── Wizard ────────────────────────────────────────────────────────────────────
+# ── Reusable widgets ──────────────────────────────────────────────────────────
+
+def _label(parent, text, font=FONT_BODY, color=FG, **kw):
+    return tk.Label(parent, text=text, font=font, fg=color, bg=parent["bg"], **kw)
+
+def _divider(parent):
+    tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=32, pady=12)
+
+def _btn(parent, text, command, primary=True, **kw):
+    bg = BTN_BG if primary else BTN_SEC
+    fg = BTN_FG if primary else FG
+    b = tk.Button(
+        parent, text=text, command=command,
+        bg=bg, fg=fg, activebackground=bg, activeforeground=fg,
+        relief="flat", font=("Helvetica", 11, "bold" if primary else "normal"),
+        padx=20, pady=8, cursor="hand2", **kw
+    )
+    # Hover effect
+    b.bind("<Enter>", lambda e: b.config(bg="#e5e5e5" if primary else "#2a2a2a"))
+    b.bind("<Leave>", lambda e: b.config(bg=bg))
+    return b
+
+
+# ── Wizard window ─────────────────────────────────────────────────────────────
 
 class SetupWizard(tk.Tk):
-    """
-    Multi-step setup wizard using a simple page-switching pattern.
-    Each page is a Frame that is shown/hidden by the navigator.
-    """
-
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
         self.title("MoE Network Setup")
-        self.geometry("640x520")
+        self.geometry("620x540")
         self.resizable(False, False)
         self.configure(bg=BG)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # State shared across pages
+        # Shared state
         self.ollama_ok   = False
-        self.expert_vars: dict[str, dict] = {}   # specialty -> {enabled, model}
-        self.synthesis_var = tk.StringVar(value=SYNTHESIS_MODEL_OPTIONS[0])
+        self.expert_vars = {}   # specialty -> {enabled: BooleanVar, model: StringVar}
+        self.synth_var   = tk.StringVar(value=SYNTH_MODELS[0])
+        self.setup_done  = False
+
+        # Build ttk style
+        s = ttk.Style(self)
+        s.theme_use("clam")
+        s.configure("TCombobox", fieldbackground=SURFACE, background=SURFACE,
+                    foreground=FG, bordercolor=BORDER, arrowcolor=FG)
+        s.configure("TCheckbutton", background=BG, foreground=FG)
+        s.configure("Horizontal.TProgressbar", troughcolor=SURFACE,
+                    background=FG, bordercolor=BORDER)
+
+        # Nav bar
+        self._nav = tk.Frame(self, bg=SURFACE, height=60)
+        self._nav.pack(side="bottom", fill="x")
+        self._nav.pack_propagate(False)
+
+        self._back_btn = _btn(self._nav, "← Back", self._go_back, primary=False)
+        self._back_btn.pack(side="left", padx=20, pady=12)
+
+        self._next_btn = _btn(self._nav, "Continue →", self._go_next, primary=True)
+        self._next_btn.pack(side="right", padx=20, pady=12)
 
         # Page container
-        self.container = tk.Frame(self, bg=BG)
-        self.container.pack(fill="both", expand=True)
+        self._container = tk.Frame(self, bg=BG)
+        self._container.pack(fill="both", expand=True)
 
-        # Bottom navigation bar
-        self._build_nav()
-
-        # Pages
-        self.pages: list[tk.Frame] = [
-            WelcomePage(self.container, self),
-            ExpertPage(self.container, self),
-            DownloadPage(self.container, self),
-            DonePage(self.container, self),
+        self._pages = [
+            WelcomePage(self._container, self),
+            ExpertsPage(self._container, self),
+            DownloadPage(self._container, self),
+            DonePage(self._container, self),
         ]
-        for page in self.pages:
-            page.place(relwidth=1, relheight=1)
+        for p in self._pages:
+            p.place(relwidth=1, relheight=1)
 
-        self.current = 0
-        self._show_page(0)
+        self._step = 0
+        self._show(0)
 
-    def _build_nav(self) -> None:
-        nav = tk.Frame(self, bg=CARD_BG, height=56)
-        nav.pack(side="bottom", fill="x")
-        nav.pack_propagate(False)
+    def _show(self, i):
+        self._step = i
+        self._pages[i].lift()
+        self._pages[i].on_show()
+        self._back_btn.config(state="normal" if i > 0 else "disabled")
+        last = (i == len(self._pages) - 1)
+        self._next_btn.config(text="Finish" if last else "Continue →")
 
-        self.back_btn = tk.Button(
-            nav, text="← Back", command=self._go_back,
-            bg=BTN_BG, fg=FG, relief="flat", font=("Helvetica", 11),
-            padx=16, pady=6, cursor="hand2",
-        )
-        self.back_btn.pack(side="left", padx=16, pady=10)
-
-        self.next_btn = tk.Button(
-            nav, text="Next →", command=self._go_next,
-            bg=ACCENT, fg=BG, relief="flat", font=("Helvetica", 11, "bold"),
-            padx=16, pady=6, cursor="hand2",
-        )
-        self.next_btn.pack(side="right", padx=16, pady=10)
-
-    def _show_page(self, index: int) -> None:
-        self.pages[index].lift()
-        self.pages[index].on_show()
-        self.back_btn.config(state="normal" if index > 0 else "disabled")
-        self.next_btn.config(
-            text="Finish" if index == len(self.pages) - 1 else "Next →",
-            state="normal",
-        )
-
-    def _go_next(self) -> None:
-        page = self.pages[self.current]
-        if not page.validate():
+    def _go_next(self):
+        if not self._pages[self._step].validate():
             return
-        if self.current == len(self.pages) - 1:
-            self.destroy()
-            return
-        self.current += 1
-        self._show_page(self.current)
-
-    def _go_back(self) -> None:
-        if self.current > 0:
-            self.current -= 1
-            self._show_page(self.current)
-
-    def set_next_enabled(self, enabled: bool) -> None:
-        self.next_btn.config(state="normal" if enabled else "disabled")
-
-    def get_selected_experts(self) -> list[dict]:
-        """Return list of expert definition dicts for enabled experts."""
-        selected = []
-        for defn in EXPERT_DEFINITIONS:
-            s = defn["specialty"]
-            if s in self.expert_vars and self.expert_vars[s]["enabled"].get():
-                chosen_model = self.expert_vars[s]["model"].get()
-                selected.append({**defn, "model": chosen_model})
-        return selected
-
-
-# ── Page base ─────────────────────────────────────────────────────────────────
-
-class BasePage(tk.Frame):
-    def __init__(self, parent: tk.Frame, wizard: SetupWizard) -> None:
-        super().__init__(parent, bg=BG)
-        self.wizard = wizard
-
-    def on_show(self) -> None:
-        pass
-
-    def validate(self) -> bool:
-        return True
-
-    def _title(self, text: str) -> None:
-        tk.Label(self, text=text, bg=BG, fg=ACCENT,
-                 font=("Helvetica", 20, "bold")).pack(pady=(32, 4))
-
-    def _subtitle(self, text: str) -> None:
-        tk.Label(self, text=text, bg=BG, fg=FG,
-                 font=("Helvetica", 12), wraplength=560).pack(pady=(0, 20))
-
-
-# ── Page 1: Welcome + Ollama check ───────────────────────────────────────────
-
-class WelcomePage(BasePage):
-    def on_show(self) -> None:
-        for w in self.winfo_children():
-            w.destroy()
-
-        self._title("Welcome to MoE Network")
-        self._subtitle(
-            "A decentralized AI network that runs entirely on your machine.\n"
-            "This wizard will get you set up in about 5 minutes."
-        )
-
-        # Ollama check card
-        card = tk.Frame(self, bg=CARD_BG, padx=24, pady=20)
-        card.pack(fill="x", padx=40)
-
-        tk.Label(card, text="Checking for Ollama...", bg=CARD_BG, fg=FG,
-                 font=("Helvetica", 13, "bold")).pack(anchor="w")
-
-        self.status_label = tk.Label(card, text="", bg=CARD_BG, fg=FG,
-                                     font=("Helvetica", 11))
-        self.status_label.pack(anchor="w", pady=(6, 0))
-
-        self.link_btn = tk.Button(
-            card, text="Download Ollama  →",
-            command=lambda: webbrowser.open("https://ollama.com/download"),
-            bg=ACCENT, fg=BG, relief="flat", font=("Helvetica", 11, "bold"),
-            padx=12, pady=5, cursor="hand2",
-        )
-
-        self.retry_btn = tk.Button(
-            card, text="Check Again",
-            command=self.on_show,
-            bg=BTN_BG, fg=FG, relief="flat", font=("Helvetica", 11),
-            padx=12, pady=5, cursor="hand2",
-        )
-
-        threading.Thread(target=self._check_ollama, daemon=True).start()
-
-    def _check_ollama(self) -> None:
-        found = shutil.which("ollama") is not None
-        self.wizard.ollama_ok = found
-        self.after(0, self._update_status, found)
-
-    def _update_status(self, found: bool) -> None:
-        if found:
-            self.status_label.config(
-                text="✓  Ollama is installed. You're ready to go.",
-                fg=SUCCESS,
-            )
-            self.link_btn.pack_forget()
-            self.retry_btn.pack_forget()
-            self.wizard.set_next_enabled(True)
+        if self._step == len(self._pages) - 1:
+            self._finish()
         else:
-            self.status_label.config(
-                text="✗  Ollama not found. Install it first (free, no account needed).",
-                fg=ERROR,
-            )
-            self.link_btn.pack(anchor="w", pady=(10, 4))
-            self.retry_btn.pack(anchor="w")
-            self.wizard.set_next_enabled(False)
+            self._show(self._step + 1)
 
-    def validate(self) -> bool:
-        if not self.wizard.ollama_ok:
-            self.wizard.set_next_enabled(False)
-            return False
-        return True
+    def _go_back(self):
+        if self._step > 0:
+            self._show(self._step - 1)
+
+    def set_next(self, enabled: bool, label: str = None):
+        self._next_btn.config(state="normal" if enabled else "disabled")
+        if label:
+            self._next_btn.config(text=label)
+
+    def get_experts(self):
+        out = []
+        for e in EXPERTS:
+            s = e["specialty"]
+            if self.expert_vars.get(s, {}).get("enabled", tk.BooleanVar()).get():
+                out.append({**e, "model": self.expert_vars[s]["model"].get()})
+        return out
+
+    def _finish(self):
+        self.setup_done = True
+        FIRST_RUN_SENTINEL.touch()
+        self.destroy()
+
+    def _on_close(self):
+        # Write sentinel even if user closes early so wizard doesn't loop
+        FIRST_RUN_SENTINEL.touch()
+        self.destroy()
 
 
-# ── Page 2: Expert & model selection ─────────────────────────────────────────
+# ── Base page ─────────────────────────────────────────────────────────────────
 
-class ExpertPage(BasePage):
-    def on_show(self) -> None:
-        for w in self.winfo_children():
-            w.destroy()
+class Page(tk.Frame):
+    def __init__(self, parent, wizard: SetupWizard):
+        super().__init__(parent, bg=BG)
+        self.wz = wizard
 
-        self._title("Choose Your Experts")
-        self._subtitle("Select which AI specialists to run and pick a model for each.")
+    def on_show(self): pass
+    def validate(self) -> bool: return True
 
-        scroll_frame = _ScrollFrame(self)
-        scroll_frame.pack(fill="both", expand=True, padx=40, pady=(0, 8))
-        inner = scroll_frame.inner
+    def _header(self, title, subtitle=None):
+        tk.Frame(self, bg=BG, height=28).pack()
+        _label(self, title, FONT_H1).pack(anchor="w", padx=32)
+        if subtitle:
+            _label(self, subtitle, FONT_BODY, FG_DIM, wraplength=540, justify="left").pack(
+                anchor="w", padx=32, pady=(4, 0))
 
-        for defn in EXPERT_DEFINITIONS:
-            s = defn["specialty"]
-            if s not in self.wizard.expert_vars:
-                self.wizard.expert_vars[s] = {
+
+# ── Page 1: Welcome ───────────────────────────────────────────────────────────
+
+class WelcomePage(Page):
+    def on_show(self):
+        for w in self.winfo_children(): w.destroy()
+
+        self._header(
+            "Set up MoE Network",
+            "A local AI network that runs entirely on your machine.\nLet's get you going in about 5 minutes."
+        )
+        _divider(self)
+
+        # Ollama status card
+        card = tk.Frame(self, bg=SURFACE, padx=24, pady=20)
+        card.pack(fill="x", padx=32)
+
+        top = tk.Frame(card, bg=SURFACE)
+        top.pack(fill="x")
+        _label(top, "Ollama", FONT_H2, bg=SURFACE).pack(side="left")
+
+        self._status = _label(top, "Checking...", FONT_BODY, FG_DIM)
+        self._status.pack(side="right")
+        self._status.master.configure(bg=SURFACE)
+
+        _label(card, "Ollama runs local AI models. Free, no account needed.",
+               FONT_SMALL, FG_DIM).pack(anchor="w", pady=(6, 0))
+
+        self._download_btn = _btn(card, "Download Ollama  ↗",
+                                  lambda: webbrowser.open("https://ollama.com/download"),
+                                  primary=False)
+        self._retry_btn = _btn(card, "Check again",
+                               self.on_show, primary=False)
+
+        self.wz.set_next(False)
+        threading.Thread(target=self._check, daemon=True).start()
+
+    def _check(self):
+        found = shutil.which("ollama") is not None
+        self.after(0, self._update, found)
+
+    def _update(self, found):
+        self.wz.ollama_ok = found
+        if found:
+            self._status.config(text="Installed ✓", fg=GOOD)
+            self._download_btn.pack_forget()
+            self._retry_btn.pack_forget()
+            self.wz.set_next(True)
+        else:
+            self._status.config(text="Not found", fg=BAD)
+            self._download_btn.pack(anchor="w", pady=(12, 4))
+            self._retry_btn.pack(anchor="w")
+            self.wz.set_next(False)
+
+    def validate(self):
+        return self.wz.ollama_ok
+
+
+# ── Page 2: Expert selection ──────────────────────────────────────────────────
+
+class ExpertsPage(Page):
+    def on_show(self):
+        for w in self.winfo_children(): w.destroy()
+
+        self._header(
+            "Choose your experts",
+            "Each expert runs a different AI model with its own specialty."
+        )
+        _divider(self)
+
+        canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
+        sb = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg=BG)
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True, padx=32)
+        sb.pack(side="right", fill="y")
+        canvas.bind_all("<MouseWheel>",
+                        lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
+
+        for e in EXPERTS:
+            s = e["specialty"]
+            if s not in self.wz.expert_vars:
+                self.wz.expert_vars[s] = {
                     "enabled": tk.BooleanVar(value=True),
-                    "model":   tk.StringVar(value=defn["models"][0]),
+                    "model":   tk.StringVar(value=e["models"][0]),
                 }
-            self._expert_card(inner, defn)
+            self._card(inner, e)
 
-        # Synthesis model
-        synth_row = tk.Frame(inner, bg=BG)
-        synth_row.pack(fill="x", pady=(8, 0))
-        tk.Label(synth_row, text="Synthesis model:", bg=BG, fg=FG,
-                 font=("Helvetica", 11)).pack(side="left")
-        ttk.Combobox(
-            synth_row, textvariable=self.wizard.synthesis_var,
-            values=SYNTHESIS_MODEL_OPTIONS, state="readonly", width=24,
-        ).pack(side="left", padx=8)
+        # Synthesis model row
+        row = tk.Frame(inner, bg=BG)
+        row.pack(fill="x", pady=(12, 4))
+        _label(row, "Synthesis model", FONT_SMALL, FG_DIM).pack(side="left")
+        ttk.Combobox(row, textvariable=self.wz.synth_var,
+                     values=SYNTH_MODELS, state="readonly", width=22,
+                     ).pack(side="right")
 
-    def _expert_card(self, parent: tk.Frame, defn: dict) -> None:
-        s     = defn["specialty"]
-        evars = self.wizard.expert_vars[s]
+    def _card(self, parent, e):
+        s = e["specialty"]
+        v = self.wz.expert_vars[s]
 
-        card = tk.Frame(parent, bg=CARD_BG, padx=16, pady=10)
+        card = tk.Frame(parent, bg=SURFACE, padx=16, pady=12)
         card.pack(fill="x", pady=4)
 
-        top = tk.Frame(card, bg=CARD_BG)
-        top.pack(fill="x")
+        row = tk.Frame(card, bg=SURFACE)
+        row.pack(fill="x")
 
         tk.Checkbutton(
-            top, text=defn["label"], variable=evars["enabled"],
-            bg=CARD_BG, fg=FG, selectcolor=BG, activebackground=CARD_BG,
-            font=("Helvetica", 12, "bold"), cursor="hand2",
+            row, text=e["label"], variable=v["enabled"],
+            bg=SURFACE, fg=FG, selectcolor="#333333",
+            activebackground=SURFACE, activeforeground=FG,
+            font=FONT_H2, cursor="hand2",
         ).pack(side="left")
 
-        ttk.Combobox(
-            top, textvariable=evars["model"],
-            values=defn["models"], state="readonly", width=26,
-        ).pack(side="right")
+        ttk.Combobox(row, textvariable=v["model"],
+                     values=e["models"], state="readonly", width=24,
+                     ).pack(side="right")
 
-        tk.Label(card, text=defn["description"], bg=CARD_BG,
-                 fg="#a6adc8", font=("Helvetica", 10)).pack(anchor="w")
+        _label(card, e["desc"], FONT_SMALL, FG_DIM).pack(anchor="w", pady=(2, 0))
 
-    def validate(self) -> bool:
-        selected = self.wizard.get_selected_experts()
-        if not selected:
+    def validate(self):
+        if not self.wz.get_experts():
             tk.messagebox.showwarning("No experts selected",
-                                      "Please enable at least one expert.")
+                                      "Enable at least one expert to continue.")
             return False
         return True
 
 
-# ── Page 3: Model download ────────────────────────────────────────────────────
+# ── Page 3: Download ──────────────────────────────────────────────────────────
 
-class DownloadPage(BasePage):
-    def __init__(self, parent: tk.Frame, wizard: SetupWizard) -> None:
+class DownloadPage(Page):
+    def __init__(self, parent, wizard):
         super().__init__(parent, wizard)
         self._started = False
 
-    def on_show(self) -> None:
+    def on_show(self):
         if self._started:
             return
         self._started = True
+        for w in self.winfo_children(): w.destroy()
 
-        for w in self.winfo_children():
-            w.destroy()
-
-        self._title("Downloading Models")
-        self._subtitle("This may take a few minutes depending on your internet speed.\n"
-                       "Already-downloaded models are instant.")
-
-        self.log = tk.Text(
-            self, bg=CARD_BG, fg=FG, font=("Courier", 10),
-            relief="flat", state="disabled", wrap="word",
+        self._header(
+            "Downloading models",
+            "Already-downloaded models are instant. New ones may take a few minutes."
         )
-        self.log.pack(fill="both", expand=True, padx=40, pady=(0, 8))
+        _divider(self)
 
-        self.progress = ttk.Progressbar(self, mode="indeterminate")
-        self.progress.pack(fill="x", padx=40, pady=(0, 8))
-        self.progress.start(12)
+        self._log = tk.Text(self, bg=SURFACE, fg=FG, font=FONT_MONO,
+                            relief="flat", state="disabled", wrap="word",
+                            padx=12, pady=8)
+        self._log.pack(fill="both", expand=True, padx=32, pady=(0, 8))
 
-        self.wizard.set_next_enabled(False)
-        threading.Thread(target=self._download_all, daemon=True).start()
+        self._bar = ttk.Progressbar(self, mode="indeterminate",
+                                    style="Horizontal.TProgressbar")
+        self._bar.pack(fill="x", padx=32, pady=(0, 4))
+        self._bar.start(12)
 
-    def _log(self, text: str, color: str = FG) -> None:
+        self.wz.set_next(False)
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _log_line(self, text, color=FG):
         def _do():
-            self.log.config(state="normal")
-            self.log.insert("end", text + "\n")
-            self.log.see("end")
-            self.log.config(state="disabled")
+            self._log.config(state="normal")
+            self._log.insert("end", text + "\n")
+            self._log.see("end")
+            self._log.config(state="disabled")
         self.after(0, _do)
 
-    def _download_all(self) -> None:
-        experts   = self.wizard.get_selected_experts()
-        synthesis = self.wizard.synthesis_var.get()
+    def _run(self):
+        experts  = self.wz.get_experts()
+        synth    = self.wz.synth_var.get()
 
-        # Collect all unique models needed
-        models_needed: list[tuple[str, str]] = []
-        seen: set[str] = set()
+        seen     = set()
+        to_pull  = []
         for e in experts:
-            m = e["model"]
-            if m not in seen:
-                models_needed.append((e["label"], m))
-                seen.add(m)
-        if synthesis not in seen:
-            models_needed.append(("Synthesis", synthesis))
+            if e["model"] not in seen:
+                to_pull.append((e["label"], e["model"]))
+                seen.add(e["model"])
+        if synth not in seen:
+            to_pull.append(("Synthesis", synth))
 
         all_ok = True
-        for label, model in models_needed:
-            self._log(f"\n[{label}] Pulling {model} ...")
-            ok = self._pull_model(model)
-            if ok:
-                self._log(f"  ✓ {model} ready", SUCCESS)
-            else:
-                self._log(f"  ✗ Failed to pull {model}", ERROR)
+        for label, model in to_pull:
+            self._log_line(f"\n[{label}]  pulling {model} ...")
+            ok = self._pull(model)
+            self._log_line(f"  {'✓ done' if ok else '✗ failed'}", GOOD if ok else BAD)
+            if not ok:
                 all_ok = False
 
         if all_ok:
-            self._log("\nAll models ready. Writing config...", SUCCESS)
-            self._write_configs(experts, synthesis)
-            self._log("Done!", SUCCESS)
+            self._log_line("\nWriting config...", FG_DIM)
+            self._write(experts, synth)
+            self._log_line("All done.", GOOD)
         else:
-            self._log("\nSome models failed. Check your internet and try again.", ERROR)
+            self._log_line("\nSome models failed. Check your connection.", BAD)
 
-        self.after(0, self._finish, all_ok)
+        self.after(0, self._done, all_ok)
 
-    def _pull_model(self, model: str) -> bool:
+    def _pull(self, model) -> bool:
         try:
-            import ollama as _ollama
-            for progress in _ollama.pull(model, stream=True):
-                status = progress.get("status", "")
-                if status:
-                    self._log(f"  {status}")
+            import ollama as _ol
+            for p in _ol.pull(model, stream=True):
+                s = p.get("status", "")
+                if s:
+                    self._log_line(f"  {s}")
             return True
-        except Exception as e:
-            self._log(f"  Error: {e}", ERROR)
+        except Exception as ex:
+            self._log_line(f"  Error: {ex}", BAD)
             return False
 
-    def _write_configs(self, experts: list[dict], synthesis_model: str) -> None:
+    def _write(self, experts, synth):
         ensure_dirs()
-        # Remove old configs
         for f in EXPERTS_DIR.glob("*.yaml"):
             f.unlink()
-
-        for i, e in enumerate(experts):
+        for e in experts:
             cfg = {
-                "specialty":        e["specialty"],
-                "model":            e["model"],
-                "http_port":        e["http_port"],
-                "dht_port":         e["dht_port"],
-                "is_bootstrap":     e.get("is_bootstrap", False),
-                "description":      e["domain_desc"],
-                "synthesis_model":  synthesis_model,
-                "system_prompt":    e["system_prompt"],
+                "specialty":       e["specialty"],
+                "model":           e["model"],
+                "http_port":       e["http_port"],
+                "dht_port":        e["dht_port"],
+                "is_bootstrap":    e["bootstrap"],
+                "description":     e["domain"],
+                "synthesis_model": synth,
+                "system_prompt":   e["prompt"],
             }
-            out = EXPERTS_DIR / f"{e['specialty']}.yaml"
-            with open(out, "w") as f:
+            with open(EXPERTS_DIR / f"{e['specialty']}.yaml", "w") as f:
                 yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
 
-        FIRST_RUN_SENTINEL.touch()
-        self._log(f"  Config written to {APP_DIR}", FG)
-
-    def _finish(self, success: bool) -> None:
-        self.progress.stop()
-        self.progress.config(mode="determinate", value=100 if success else 0)
-        self.wizard.set_next_enabled(success)
+    def _done(self, ok):
+        self._bar.stop()
+        self._bar.config(mode="determinate", value=100 if ok else 0)
+        self.wz.set_next(ok, "Continue →")
 
 
-# ── Page 4: Done ──────────────────────────────────────────────────────────────
+# ── Page 4: Done ─────────────────────────────────────────────────────────────
 
-class DonePage(BasePage):
-    def on_show(self) -> None:
-        for w in self.winfo_children():
-            w.destroy()
+class DonePage(Page):
+    def on_show(self):
+        for w in self.winfo_children(): w.destroy()
 
-        self._title("All Set!")
-        self._subtitle(
-            "Your MoE network is configured and ready.\n"
-            "Click Finish to launch -- the icon will appear in your system tray."
-        )
+        self._header("You're all set")
+        _divider(self)
 
-        tk.Label(self, text="🎉", bg=BG, font=("Helvetica", 60)).pack(pady=20)
+        tk.Frame(self, bg=BG, height=12).pack()
 
-        info = (
-            f"Experts configured: {len(list(EXPERTS_DIR.glob('*.yaml')))}\n"
-            f"Config location: {APP_DIR}\n\n"
-            "Right-click the tray icon to open a chat, manage the network,\n"
-            "or enable the remote relay feature."
-        )
-        tk.Label(self, text=info, bg=BG, fg="#a6adc8",
-                 font=("Helvetica", 11), justify="center").pack()
+        _label(self, "The app is starting in your system tray.", FONT_H2).pack()
+        tk.Frame(self, bg=BG, height=8).pack()
 
+        if sys.platform == "win32":
+            tip = "Look for the icon in the bottom-right corner of your screen.\nClick the  ∧  arrow if you don't see it right away."
+        elif sys.platform == "darwin":
+            tip = "Look for the icon in the menu bar at the top-right of your screen."
+        else:
+            tip = "Look for the icon in your system tray."
 
-# ── Scrollable frame helper ───────────────────────────────────────────────────
+        _label(self, tip, FONT_BODY, FG_DIM, wraplength=480, justify="center").pack(pady=8)
 
-class _ScrollFrame(tk.Frame):
-    def __init__(self, parent: tk.Widget) -> None:
-        super().__init__(parent, bg=BG)
-        canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        self.inner = tk.Frame(canvas, bg=BG)
+        tk.Frame(self, bg=BG, height=24).pack()
 
-        self.inner.bind("<Configure>",
-                        lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+        _label(self,
+               "Right-click the tray icon to open a chat,\n"
+               "manage experts, or enable the remote relay.",
+               FONT_BODY, FG_DIM, justify="center").pack()
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Public entry point ────────────────────────────────────────────────────────
 
 def run_if_needed() -> bool:
     """
-    Run the wizard if this is the first time the app has been opened.
-    Returns True if the wizard ran (caller should start tray after).
-    Returns False if setup is already done (caller can start tray directly).
+    Show the wizard if this is the first run.
+    Returns True if wizard ran, False if already set up.
     """
-    if FIRST_RUN_SENTINEL.exists() and any(EXPERTS_DIR.glob("*.yaml")):
+    if FIRST_RUN_SENTINEL.exists():
         return False
 
-    app = SetupWizard()
-    app.mainloop()
+    wz = SetupWizard()
+    wz.mainloop()
     return True
 
 
