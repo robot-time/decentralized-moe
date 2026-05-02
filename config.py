@@ -70,6 +70,9 @@ DEFAULTS: dict[str, Any] = {
 
     # Prevent system sleep while the app is running (so peers can reach us)
     "keep_awake": True,
+
+    # Automatically check for updates on startup
+    "auto_update": True,
 }
 
 

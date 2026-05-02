@@ -354,6 +354,7 @@
   <button id="btn-settings">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.67 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.67a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 20.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     Settings
+    <span id="update-badge" style="display:none;margin-left:auto;background:var(--success);color:var(--bg);font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;">New</span>
   </button>
 </div>
 
@@ -420,6 +421,19 @@
       <div class="modal-row" style="display:flex;align-items:center;gap:8px;">
         <input type="checkbox" id="set-keep-awake" style="width:auto;">
         <label for="set-keep-awake" style="margin-bottom:0;font-weight:400;">Prevent system sleep while running</label>
+      </div>
+      <div class="modal-row" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="set-auto-update" style="width:auto;">
+        <label for="set-auto-update" style="margin-bottom:0;font-weight:400;">Auto-check for updates on startup</label>
+      </div>
+      <div class="divider" style="margin:16px 0;"></div>
+      <div class="modal-row">
+        <label>Version</label>
+        <div id="update-version" style="font-size:13px;color:var(--fg-dim);">Checking…</div>
+      </div>
+      <div class="modal-row" id="update-actions" style="display:none;">
+        <button class="btn-primary" id="btn-check-update" style="width:100%;">Check for Updates</button>
+        <button class="btn-primary" id="btn-apply-update" style="width:100%;display:none;margin-top:8px;">Download &amp; Restart</button>
       </div>
     </div>
     <div class="modal-actions">
@@ -575,7 +589,9 @@ async function openSettings() {
     $('set-http-port').value = currentConfig.http_port || 8001;
     $('set-aggregator').value = currentConfig.aggregator_model || 'llama3.1:8b';
     $('set-keep-awake').checked = currentConfig.keep_awake !== false;
+    $('set-auto-update').checked = currentConfig.auto_update !== false;
     modal.classList.add('open');
+    loadUpdateInfo();
   } catch (e) {
     addError('Could not load settings');
   }
@@ -590,6 +606,7 @@ $('set-save').addEventListener('click', async () => {
     http_port: parseInt($('set-http-port').value) || 8001,
     aggregator_model: ($('set-aggregator').value || 'llama3.1:8b').trim(),
     keep_awake: $('set-keep-awake').checked,
+    auto_update: $('set-auto-update').checked,
   };
   try {
     await fetch('/api/config', {
@@ -602,6 +619,67 @@ $('set-save').addEventListener('click', async () => {
     loadConfig();
   } catch (e) {
     addError('Failed to save settings');
+  }
+});
+
+/* ---------- Updates ---------- */
+let updateData = {};
+
+async function loadUpdateInfo() {
+  try {
+    const res = await fetch('/api/update');
+    updateData = await res.json();
+    if (updateData.error) {
+      $('update-version').textContent = 'Unable to check';
+      $('update-actions').style.display = 'block';
+      $('btn-check-update').style.display = 'block';
+      $('btn-apply-update').style.display = 'none';
+      return;
+    }
+    $('update-version').textContent = `v${updateData.current}`;
+    $('update-actions').style.display = 'block';
+    if (updateData.available) {
+      $('update-version').innerHTML = `v${escapeHtml(updateData.current)} <span style="color:var(--success);">→ v${escapeHtml(updateData.latest)} available</span>`;
+      $('btn-check-update').style.display = 'none';
+      $('btn-apply-update').style.display = 'block';
+    } else {
+      $('btn-check-update').style.display = 'block';
+      $('btn-apply-update').style.display = 'none';
+    }
+  } catch (e) {
+    $('update-version').textContent = 'Offline';
+    $('update-actions').style.display = 'block';
+    $('btn-check-update').style.display = 'block';
+    $('btn-apply-update').style.display = 'none';
+  }
+}
+
+$('btn-check-update').addEventListener('click', async () => {
+  $('btn-check-update').textContent = 'Checking…';
+  $('btn-check-update').disabled = true;
+  await loadUpdateInfo();
+  $('btn-check-update').textContent = 'Check for Updates';
+  $('btn-check-update').disabled = false;
+});
+
+$('btn-apply-update').addEventListener('click', async () => {
+  if (!confirm('The app will download the update and restart. Continue?')) return;
+  $('btn-apply-update').textContent = 'Downloading…';
+  $('btn-apply-update').disabled = true;
+  try {
+    const res = await fetch('/api/update', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      addInfo('Update downloaded. Restarting…');
+    } else {
+      addError(data.error || 'Update failed');
+      $('btn-apply-update').textContent = 'Download & Restart';
+      $('btn-apply-update').disabled = false;
+    }
+  } catch (e) {
+    addError('Update request failed');
+    $('btn-apply-update').textContent = 'Download & Restart';
+    $('btn-apply-update').disabled = false;
   }
 });
 
@@ -659,6 +737,11 @@ async function checkHealth() {
       const d = await res.json();
       status.textContent = `Connected · ${d.specialty || 'client'} · ${d.model || '?'}`;
       status.style.color = 'var(--fg-muted)';
+      if (d.update_available) {
+        $('update-badge').style.display = 'inline-block';
+      } else {
+        $('update-badge').style.display = 'none';
+      }
     }
   } catch (e) {
     status.textContent = 'Disconnected from backend';

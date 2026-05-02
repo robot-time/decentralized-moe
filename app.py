@@ -30,6 +30,7 @@ from config import BUNDLE_DIR, copy_default_experts, ensure_dirs, load, load_exp
 from keepawake import KeepAwake
 from network import Network, Peer, _local_ip
 from specialist import Specialist
+from updater import check_latest, is_newer, apply_update, _current_version, _asset_name
 
 _UI_DIR = Path(__file__).parent / "ui"
 
@@ -80,6 +81,8 @@ class WebApp:
         self._ready = threading.Event()
         self._keepawake = KeepAwake()
         self._local_specialist_url: str | None = None
+        self._update_info: dict = {"checked": False}
+        self._auto_update_task = None
 
     # ── Handlers ────────────────────────────────────────────────────────
 
@@ -103,7 +106,8 @@ class WebApp:
             "label":     expert.get("label") if expert else None,
             "model":     expert.get("model") if expert else None,
             "dht_port":  self.cfg.get("dht_port", 8468),
-            "version":   "1.5.2",
+            "version":   "1.6.0",
+            "update_available": self._update_info.get("available", False),
         })
 
     async def handle_config_get(self, request: web.Request) -> web.Response:
@@ -120,7 +124,8 @@ class WebApp:
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
         allowed = {"role", "bootstrap", "dht_port", "http_port",
-                   "aggregator_model", "wizard_done", "keep_awake"}
+                   "aggregator_model", "wizard_done", "keep_awake",
+                   "auto_update"}
         for key in allowed:
             if key in body:
                 self.cfg[key] = body[key]
@@ -175,6 +180,44 @@ class WebApp:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=500)
 
+    async def handle_update_check(self, request: web.Request) -> web.Response:
+        """Return cached update info or trigger a fresh check."""
+        try:
+            latest = await check_latest()
+            if "error" in latest:
+                return web.json_response({"error": latest["error"]}, status=502)
+            current = _current_version()
+            available = is_newer(current, latest["version"])
+            self._update_info = {
+                "current": current,
+                "latest": latest["version"],
+                "available": available,
+                "url": latest["url"],
+                "asset": latest["assets"].get(_asset_name(), ""),
+                "checked": True,
+                "checked_at": time.time(),
+            }
+            return web.json_response(self._update_info)
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+
+    async def handle_update_apply(self, request: web.Request) -> web.Response:
+        """Download and apply the update. Returns success before exiting."""
+        asset_url = self._update_info.get("asset", "")
+        if not asset_url:
+            return web.json_response({"error": "no asset url"}, status=400)
+        ok = await apply_update(asset_url)
+        if ok:
+            # Schedule a clean exit after the response is sent
+            asyncio.get_event_loop().call_later(1, self._shutdown)
+            return web.json_response({"ok": True, "message": "Restarting…"})
+        return web.json_response({"error": "update failed"}, status=500)
+
+    def _shutdown(self) -> None:
+        """Exit the process so the updater script can replace files."""
+        import os
+        os._exit(0)
+
     # ── Startup ─────────────────────────────────────────────────────────
 
     async def _run_server(self) -> None:
@@ -186,6 +229,8 @@ class WebApp:
         app.router.add_post("/api/config", self.handle_config_post)
         app.router.add_get("/api/peers",   self.handle_peers)
         app.router.add_post("/api/query",  self.handle_query)
+        app.router.add_get("/api/update", self.handle_update_check)
+        app.router.add_post("/api/update", self.handle_update_apply)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -240,6 +285,32 @@ class WebApp:
         )
         await self.network.start()
         print(f"[network] DHT listening on port {dht_port}")
+
+        # Background auto-update check
+        if self.cfg.get("auto_update", True):
+            asyncio.create_task(self._auto_update_loop())
+
+    async def _auto_update_loop(self) -> None:
+        """Check for updates once on startup after a short delay."""
+        await asyncio.sleep(30)
+        try:
+            latest = await check_latest()
+            if "error" not in latest:
+                current = _current_version()
+                available = is_newer(current, latest["version"])
+                self._update_info = {
+                    "current": current,
+                    "latest": latest["version"],
+                    "available": available,
+                    "url": latest["url"],
+                    "asset": latest["assets"].get(_asset_name(), ""),
+                    "checked": True,
+                    "checked_at": time.time(),
+                }
+                if available:
+                    print(f"[update] v{latest['version']} available (running v{current})")
+        except Exception as exc:
+            print(f"[update] auto-check failed: {exc}")
 
     # ── Entry ───────────────────────────────────────────────────────────
 
