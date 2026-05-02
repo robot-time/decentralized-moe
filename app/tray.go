@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -62,7 +61,7 @@ func onTrayReady(projectDir string) {
 }
 
 func onTrayExit() {
-	stopPython()
+	stopBackend()
 }
 
 // openWindow opens (or focuses) the WebView2 chat window.
@@ -151,7 +150,5 @@ func rgbaToBytes(img *image.RGBA) []byte {
 }
 
 func postAPI(url string) {
-	// Fire-and-forget POST; ignore response
-	_ = fmt.Sprintf("POST %s", url)
 	doPost(url)
 }
