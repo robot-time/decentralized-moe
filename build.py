@@ -143,6 +143,7 @@ def build() -> None:
         "--hidden-import=PIL.Image",
         "--hidden-import=PIL.ImageDraw",
         "--hidden-import=settings_ui",
+        "--hidden-import=chat_ui",
 
         # Entry point
         "main.py",

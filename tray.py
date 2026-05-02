@@ -227,45 +227,22 @@ class NodeManager:
 # ── Terminal launcher (cross-platform) ────────────────────────────────────────
 
 
-def open_ask_terminal(node_url: Optional[str] = None) -> None:
+def open_chat_window(node_url: Optional[str] = None) -> None:
     """
-    Open a terminal window running ask.py connected to the network.
-    Works on Windows, macOS, and Linux.
-    In frozen mode the executable is re-launched with --ask so main.py
-    dispatches to ask.main() without needing a separate .py file.
+    Open a Tkinter chat window connected to a local node.
+
+    Why a window and not a terminal: PyInstaller --windowed builds have no
+    console subsystem, so a CLI like ask.py cannot read stdin when frozen
+    (`input("You: ")` returns nothing).  A GUI window works on every
+    platform without that limitation, exactly like the settings window.
     """
     if getattr(sys, "frozen", False):
-        cmd_args = [sys.executable, "--ask"]
+        cmd = [sys.executable, "--chat"]
     else:
-        cmd_args = [sys.executable, str(BASE_DIR / "ask.py")]
+        cmd = [sys.executable, str(BASE_DIR / "chat_ui.py")]
     if node_url:
-        cmd_args.append(node_url)
-
-    if sys.platform == "win32":
-        subprocess.Popen(["cmd", "/k"] + cmd_args, creationflags=subprocess.CREATE_NEW_CONSOLE)
-
-    elif sys.platform == "darwin":
-        # Write a temp shell script and open it in Terminal.app.
-        # Use APP_DIR (user-writable) rather than BASE_DIR which may be
-        # a read-only _MEIPASS temp directory when running frozen.
-        tmp = APP_DIR / "_open_terminal.sh"
-        tmp.write_text(f"#!/bin/bash\n{' '.join(cmd_args)}\n")
-        tmp.chmod(0o755)
-        subprocess.Popen(["open", "-a", "Terminal", str(tmp)])
-
-    else:
-        # Try common Linux terminal emulators in order of preference
-        for term, flag in [
-            ("gnome-terminal", "--"),
-            ("konsole", "-e"),
-            ("xfce4-terminal", "-e"),
-            ("xterm", "-e"),
-        ]:
-            if shutil.which(term):
-                subprocess.Popen([term, flag] + cmd_args)
-                return
-        # Fallback: just run in background (no visible terminal)
-        subprocess.Popen(cmd_args)
+        cmd.append(node_url)
+    subprocess.Popen(cmd)
 
 
 # ── Tray App ──────────────────────────────────────────────────────────────────
@@ -345,7 +322,7 @@ class TrayApp:
             pystray.Menu.SEPARATOR,
 
             # Chat
-            pystray.MenuItem("Open Chat Terminal", self._on_open_terminal),
+            pystray.MenuItem("Open Chat", self._on_open_chat),
 
             pystray.Menu.SEPARATOR,
 
@@ -381,8 +358,8 @@ class TrayApp:
 
     # ── Menu actions ──────────────────────────────────────────────────────
 
-    def _on_open_terminal(self, icon=None, item=None) -> None:
-        open_ask_terminal()
+    def _on_open_chat(self, icon=None, item=None) -> None:
+        open_chat_window()
 
     def _on_start(self, icon=None, item=None) -> None:
         threading.Thread(target=self._start_and_refresh, daemon=True).start()

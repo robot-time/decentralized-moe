@@ -81,6 +81,18 @@ def _dispatch() -> bool:
             sys.exit(1)
         return True
 
+    # ── Chat window subprocess ────────────────────────────────────────────
+    if "--chat" in args:
+        idx = args.index("--chat")
+        url_args = args[idx + 1:]
+        try:
+            from chat_ui import run_chat_standalone
+            run_chat_standalone(url_args[0] if url_args else "http://localhost:8001")
+        except Exception as e:
+            _log_dispatch_error("chat", e)
+            sys.exit(1)
+        return True
+
     # ── Settings window subprocess ────────────────────────────────────────
     if "--settings" in args:
         try:
@@ -204,4 +216,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException as _exc:
+        # Frozen --windowed apps swallow tracebacks. Persist any startup
+        # crash to a file so the user can see why the app died.
+        _log_dispatch_error("startup", _exc)
+        raise
