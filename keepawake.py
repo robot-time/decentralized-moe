@@ -4,16 +4,16 @@ keepawake.py -- Prevent system sleep while the MoE network is active
 Lightweight cross-platform keep-awake.  Blocks OS sleep (not display
 sleep) so the DHT specialist stays reachable.
 
- macOS : IOKit assertion (display can still dim; system won't sleep)
- Windows : SetThreadExecutionState (ES_SYSTEM_REQUIRED)
- Linux   : systemd-inhibit or xdg-screensaver
+ macOS   : caffeinate (preinstalled, standard Apple tool)
+ Windows : SetThreadExecutionState
+ Linux   : best-effort via xdg-screensaver or systemd-inhibit
 """
 
 from __future__ import annotations
 
 import ctypes
+import subprocess
 import sys
-import threading
 
 
 class KeepAwake:
@@ -21,7 +21,7 @@ class KeepAwake:
 
     def __init__(self) -> None:
         self._active = False
-        self._mac_assertion_id = None
+        self._mac_proc: subprocess.Popen | None = None
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -47,36 +47,32 @@ class KeepAwake:
         else:
             self._stop_linux()
 
-    # ── macOS (IOKit assertion) ───────────────────────────────────────
+    # ── macOS (caffeinate) ──────────────────────────────────────────────
 
     def _start_mac(self) -> None:
+        """
+        caffeinate -i prevents idle sleep (display can still dim).
+        Runs in background; we terminate it in stop().
+        """
         try:
-            from ctypes import cdll, c_void_p, c_uint32, c_double, byref, pointer
-            IOKit = cdll.LoadLibrary("/System/Library/Frameworks/IOKit.framework/IOKit")
-            kIOPMAssertionTypeNoIdleSleep = b"NoIdleSleepAssertion"
-            kIOPMAssertionLevelOn = 255
-
-            assertion_id = c_uint32(0)
-            IOKit.IOPMAssertionCreateWithName(
-                kIOPMAssertionTypeNoIdleSleep,
-                kIOPMAssertionLevelOn,
-                b"MoE Network active",
-                byref(assertion_id),
+            self._mac_proc = subprocess.Popen(
+                ["caffeinate", "-i"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
-            self._mac_assertion_id = assertion_id
+        except FileNotFoundError:
+            print("[keepawake] caffeinate not found (should be preinstalled on macOS)")
         except Exception as exc:
             print(f"[keepawake] macOS start failed: {exc}")
 
     def _stop_mac(self) -> None:
-        if self._mac_assertion_id is None:
-            return
-        try:
-            from ctypes import cdll, c_uint32, byref
-            IOKit = cdll.LoadLibrary("/System/Library/Frameworks/IOKit.framework/IOKit")
-            IOKit.IOPMAssertionRelease(self._mac_assertion_id)
-            self._mac_assertion_id = None
-        except Exception as exc:
-            print(f"[keepawake] macOS stop failed: {exc}")
+        if self._mac_proc is not None:
+            try:
+                self._mac_proc.terminate()
+                self._mac_proc.wait(timeout=2)
+            except Exception:
+                pass
+            self._mac_proc = None
 
     # ── Windows (SetThreadExecutionState) ───────────────────────────────
 
@@ -97,11 +93,9 @@ class KeepAwake:
         except Exception as exc:
             print(f"[keepawake] Windows stop failed: {exc}")
 
-    # ── Linux (best-effort via xdg-screensaver or systemd-inhibit) ─────
+    # ── Linux (best-effort) ─────────────────────────────────────────────
 
     def _start_linux(self) -> None:
-        # We don't have a persistent process to inhibit with, so we just
-        # rely on the user having a desktop session that respects idle.
         pass
 
     def _stop_linux(self) -> None:
