@@ -129,14 +129,110 @@ if _dispatch():
 # previous failed runs leave --node/--ask processes alive holding DHT ports.
 # Kill them before we start fresh.
 
-def _kill_stale_processes() -> None:
-    """Kill leftover MoE-Network processes from previous runs (best-effort)."""
+def _kill_pid(pid: int) -> None:
+    """Force-kill a single PID, swallowing any error."""
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                capture_output=True, timeout=5,
+            )
+        except Exception:
+            pass
+    else:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError):
+                return
+            time.sleep(0.3)
+
+
+def _pids_using_ports(ports: list[int]) -> set[int]:
+    """
+    Return PIDs of processes currently bound to any of the given ports.
+    Uses netstat on Windows and lsof on Unix.  Best-effort -- returns an
+    empty set on any failure.
+    """
+    pids: set[int] = set()
     me = os.getpid()
+    port_strs = [f":{p}" for p in ports]
 
     if sys.platform == "win32":
         try:
             r = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq MoE-Network.exe", "/FO", "CSV", "/NH"],
+                ["netstat", "-ano"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in r.stdout.splitlines():
+                if any(ps in line for ps in port_strs):
+                    parts = line.split()
+                    if parts and parts[-1].isdigit():
+                        pid = int(parts[-1])
+                        if pid != me and pid != 0:
+                            pids.add(pid)
+        except Exception:
+            pass
+    else:
+        for port in ports:
+            try:
+                r = subprocess.run(
+                    ["lsof", "-nP", "-iTCP:%d" % port, "-iUDP:%d" % port],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in r.stdout.splitlines()[1:]:
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        pid = int(parts[1])
+                        if pid != me:
+                            pids.add(pid)
+            except Exception:
+                continue
+    return pids
+
+
+def _read_dht_ports() -> list[int]:
+    """Read DHT ports from every expert YAML so we can free them on startup."""
+    ports = [8468, 8469, 8471, 8472]  # known defaults if reading fails
+    try:
+        import yaml
+        from app_paths import APP_DIR
+        experts_dir = APP_DIR / "experts"
+        if experts_dir.exists():
+            found = []
+            for f in experts_dir.glob("*.yaml"):
+                try:
+                    with open(f) as fh:
+                        cfg = yaml.safe_load(fh) or {}
+                    p = cfg.get("dht_port")
+                    if isinstance(p, int):
+                        found.append(p)
+                except Exception:
+                    pass
+            if found:
+                return found
+    except Exception:
+        pass
+    return ports
+
+
+def _kill_stale_processes() -> None:
+    """
+    Kill leftover MoE-Network processes from previous runs.
+
+    Two passes for reliability:
+      1. By executable name (catches all our subprocesses)
+      2. By port (catches anything still holding our DHT ports, regardless
+         of name -- could be an old version of the app, an orphan, etc.)
+    """
+    me = os.getpid()
+
+    # ── Pass 1: by executable name ───────────────────────────────────────
+    if sys.platform == "win32":
+        try:
+            r = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq MoE-Network.exe",
+                 "/FO", "CSV", "/NH"],
                 capture_output=True, text=True, timeout=5,
             )
             for line in r.stdout.splitlines():
@@ -144,10 +240,7 @@ def _kill_stale_processes() -> None:
                 if len(parts) >= 2 and parts[1].isdigit():
                     pid = int(parts[1])
                     if pid != me:
-                        subprocess.run(
-                            ["taskkill", "/F", "/PID", str(pid)],
-                            capture_output=True, timeout=5,
-                        )
+                        _kill_pid(pid)
         except Exception:
             pass
     else:
@@ -156,20 +249,19 @@ def _kill_stale_processes() -> None:
                 ["pgrep", "-f", "MoE-Network"],
                 capture_output=True, text=True, timeout=5,
             )
-            pids = [int(p) for p in r.stdout.split() if p.isdigit() and int(p) != me]
-            for pid in pids:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except (ProcessLookupError, PermissionError):
-                    pass
-            time.sleep(1)
-            for pid in pids:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
+            for tok in r.stdout.split():
+                if tok.isdigit() and int(tok) != me:
+                    _kill_pid(int(tok))
         except Exception:
             pass
+
+    # ── Pass 2: by port ──────────────────────────────────────────────────
+    # School/managed Windows often leaves orphans that taskkill misses.
+    # If anything is still bound to a DHT port we need, kill it directly.
+    time.sleep(0.5)
+    for pid in _pids_using_ports(_read_dht_ports()):
+        _kill_pid(pid)
+    time.sleep(0.5)
 
 # ── Normal tray startup ───────────────────────────────────────────────────────
 

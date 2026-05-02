@@ -61,8 +61,9 @@ _RELAY_DEFAULTS = {
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _label(parent, text, font=FONT_BODY, color=FG, **kw):
-    return tk.Label(parent, text=text, font=font, fg=color,
-                    bg=parent["bg"], **kw)
+    # setdefault so callers can override bg without TypeError on macOS
+    kw.setdefault("bg", parent["bg"])
+    return tk.Label(parent, text=text, font=font, fg=color, **kw)
 
 
 def _divider(parent):

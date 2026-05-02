@@ -1,0 +1,164 @@
+"""
+network.py -- DHT-based peer discovery for the MoE Network
+============================================================
+Each node (specialist OR user-only client) joins a small Kademlia DHT.
+Specialist nodes register themselves under a well-known key.  Any node
+can read the list to find peers and call their /query endpoints.
+
+This is the "works across multiple networks" piece — Kademlia gossips
+peer info via UDP, so as long as one bootstrap host is reachable from
+each device the network forms.
+
+Why DHT (not a centralised registry):
+  - No single point of failure
+  - No server to host
+  - Scales as the network grows
+
+How to bootstrap across networks:
+  - The user sets `bootstrap: host:port` in ~/.moe-network/config.yaml,
+    pointing at the DHT port of any reachable participant.  Tailscale,
+    a VPS, or any port-forwarded home machine all work.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import socket
+import time
+from dataclasses import dataclass
+from typing import Optional
+
+from kademlia.network import Server
+
+PEER_LIST_KEY = "moe:peers"
+PEER_TTL_SEC  = 90  # peers are dropped if not refreshed within this window
+
+
+@dataclass
+class Peer:
+    specialty: str
+    label:     str
+    url:       str
+    last_seen: float
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Peer":
+        return cls(
+            specialty=d["specialty"],
+            label=d.get("label", d["specialty"].upper()),
+            url=d["url"],
+            last_seen=float(d.get("last_seen", time.time())),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "specialty": self.specialty,
+            "label":     self.label,
+            "url":       self.url,
+            "last_seen": self.last_seen,
+        }
+
+
+def _local_ip() -> str:
+    """Best-effort local LAN IP (so peers reach us, not 127.0.0.1)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+class Network:
+    """
+    Thin wrapper over kademlia.Server with a periodic register/refresh loop.
+    Created and run from the chat app's asyncio thread.
+    """
+
+    def __init__(
+        self,
+        dht_port:  int,
+        bootstrap: str = "",
+        my_specialty: Optional[str] = None,
+        my_label:     Optional[str] = None,
+        my_http_port: Optional[int] = None,
+    ) -> None:
+        self.dht_port      = dht_port
+        self.bootstrap     = bootstrap.strip()
+        self.my_specialty  = my_specialty
+        self.my_label      = my_label
+        self.my_http_port  = my_http_port
+        self._server       = Server()
+        self._running      = False
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────
+
+    async def start(self) -> None:
+        await self._server.listen(self.dht_port)
+        if self.bootstrap:
+            host, _, port = self.bootstrap.partition(":")
+            try:
+                await self._server.bootstrap([(host, int(port or 8468))])
+            except Exception as exc:
+                print(f"[network] bootstrap to {self.bootstrap} failed: {exc}")
+        self._running = True
+        asyncio.create_task(self._refresh_loop())
+
+    async def stop(self) -> None:
+        self._running = False
+        self._server.stop()
+
+    # ── Register/refresh ──────────────────────────────────────────────────
+
+    async def _refresh_loop(self) -> None:
+        """Re-publish our own entry every 30s so it stays in the DHT."""
+        while self._running:
+            try:
+                await self._publish_self()
+            except Exception as exc:
+                print(f"[network] publish failed: {exc}")
+            await asyncio.sleep(30)
+
+    async def _publish_self(self) -> None:
+        if not self.my_specialty or not self.my_http_port:
+            return
+        url   = f"http://{_local_ip()}:{self.my_http_port}"
+        entry = Peer(
+            specialty=self.my_specialty,
+            label=self.my_label or self.my_specialty.upper(),
+            url=url,
+            last_seen=time.time(),
+        ).to_dict()
+
+        # Read-modify-write the shared peer list
+        raw   = await self._server.get(PEER_LIST_KEY)
+        peers = json.loads(raw) if raw else []
+        peers = [p for p in peers if p.get("url") != url]
+        peers.append(entry)
+        # Drop expired entries
+        cutoff = time.time() - PEER_TTL_SEC
+        peers  = [p for p in peers if float(p.get("last_seen", 0)) >= cutoff]
+
+        await self._server.set(PEER_LIST_KEY, json.dumps(peers))
+
+    # ── Discovery ─────────────────────────────────────────────────────────
+
+    async def discover(self) -> list[Peer]:
+        """Return all currently-known peers, freshest first."""
+        try:
+            raw = await self._server.get(PEER_LIST_KEY)
+        except Exception:
+            return []
+        if not raw:
+            return []
+        try:
+            peers = [Peer.from_dict(d) for d in json.loads(raw)]
+        except Exception:
+            return []
+        cutoff = time.time() - PEER_TTL_SEC
+        peers  = [p for p in peers if p.last_seen >= cutoff]
+        peers.sort(key=lambda p: p.last_seen, reverse=True)
+        return peers
