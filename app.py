@@ -106,7 +106,7 @@ class WebApp:
             "label":     expert.get("label") if expert else None,
             "model":     expert.get("model") if expert else None,
             "dht_port":  self.cfg.get("dht_port", 8468),
-            "version":   "1.6.1",
+            "version":   "1.6.2",
             "update_available": self._update_info.get("available", False),
         })
 
