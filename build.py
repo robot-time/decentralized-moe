@@ -80,6 +80,35 @@ def generate_icon() -> Path:
     return ico_path if sys.platform == "win32" else png_path
 
 
+def _patch_macos_plist(app_path: Path) -> None:
+    """
+    Add LSUIElement=1 to the macOS app bundle's Info.plist.
+
+    Without this the OS treats the app as a regular GUI application that
+    should have a dock icon.  When no windows are open it can be killed or
+    behave unexpectedly.  LSUIElement=1 marks it as a background/menu-bar
+    agent -- exactly what a tray-only app needs.
+    """
+    import plistlib
+
+    plist_path = app_path / "Contents" / "Info.plist"
+    if not plist_path.exists():
+        print(f"  Warning: Info.plist not found at {plist_path}")
+        return
+
+    with open(plist_path, "rb") as f:
+        plist = plistlib.load(f)
+
+    plist["LSUIElement"] = True
+    # Also ensure the bundle doesn't show in the Force-Quit panel
+    plist.setdefault("NSHighResolutionCapable", True)
+
+    with open(plist_path, "wb") as f:
+        plistlib.dump(plist, f)
+
+    print("  macOS: patched Info.plist (LSUIElement=1)")
+
+
 def build() -> None:
     print("=" * 56)
     print("  Building MoE Network distributable")
@@ -98,7 +127,7 @@ def build() -> None:
         "--windowed",        # no terminal/console window on Windows + macOS
         "--name", "MoE-Network",
 
-        # Bundle the default expert YAML templates
+        # Bundle the default expert YAML templates and settings UI script
         f"--add-data=experts{os.pathsep}experts",
 
         # Hidden imports PyInstaller misses for these libraries
@@ -113,10 +142,21 @@ def build() -> None:
         "--hidden-import=PIL",
         "--hidden-import=PIL.Image",
         "--hidden-import=PIL.ImageDraw",
+        "--hidden-import=settings_ui",
 
         # Entry point
         "main.py",
     ]
+
+    # macOS: pystray's darwin backend requires pyobjc (AppKit / Foundation)
+    if sys.platform == "darwin":
+        args += [
+            "--hidden-import=AppKit",
+            "--hidden-import=Foundation",
+            "--hidden-import=objc",
+            "--hidden-import=Cocoa",
+            "--osx-bundle-identifier=com.moe-network.tray",
+        ]
 
     # Add platform-specific icon
     if icon_path and icon_path.exists():
@@ -132,6 +172,12 @@ def build() -> None:
 
     if result.returncode == 0:
         dist = ROOT / "dist"
+
+        # macOS: patch Info.plist so the app runs as a menu-bar-only agent.
+        # LSUIElement=1 hides the dock icon and lets pystray own the status bar.
+        if sys.platform == "darwin":
+            _patch_macos_plist(dist / "MoE-Network.app")
+
         print()
         print("=" * 56)
         print("  Build successful!")

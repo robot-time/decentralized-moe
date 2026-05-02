@@ -3,6 +3,11 @@ main.py -- App Entry Point
 ===========================
 Single entry point for the bundled app.
 Enforces one instance only, runs the wizard on first launch, then the tray.
+
+Special flags (used internally):
+  --settings   Open the settings window and exit (spawned by the tray icon).
+               Bypasses the single-instance lock so it can run alongside the
+               main tray process.
 """
 
 import socket
@@ -29,6 +34,13 @@ def _acquire_lock() -> bool:
 
 
 def main() -> None:
+    # Settings window: spawned as a subprocess by the tray to avoid competing
+    # with pystray's AppKit/Win32 event loop.  Bypass lock so it coexists.
+    if "--settings" in sys.argv:
+        from settings_ui import run_settings_standalone
+        run_settings_standalone()
+        return
+
     if not _acquire_lock():
         # Another instance is already running -- just exit silently
         sys.exit(0)

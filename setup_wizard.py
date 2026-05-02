@@ -17,7 +17,7 @@ import sys
 import threading
 import webbrowser
 from tkinter import font as tkfont
-from tkinter import ttk
+from tkinter import messagebox, ttk
 import tkinter as tk
 
 import yaml
@@ -355,8 +355,8 @@ class ExpertsPage(Page):
 
     def validate(self):
         if not self.wz.get_experts():
-            tk.messagebox.showwarning("No experts selected",
-                                      "Enable at least one expert to continue.")
+            messagebox.showwarning("No experts selected",
+                                   "Enable at least one expert to continue.")
             return False
         return True
 
@@ -509,6 +509,15 @@ def run_if_needed() -> bool:
         return False
 
     wz = SetupWizard()
+
+    # Force window to the foreground (important on Windows where new windows
+    # can appear behind the taskbar or existing windows).
+    wz.lift()
+    wz.focus_force()
+    if sys.platform == "win32":
+        wz.attributes("-topmost", True)
+        wz.after(500, lambda: wz.attributes("-topmost", False))
+
     wz.mainloop()
     return True
 

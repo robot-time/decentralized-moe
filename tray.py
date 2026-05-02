@@ -28,6 +28,7 @@ The tray icon shows:
 """
 
 import asyncio
+import logging
 import os
 import shutil
 import subprocess
@@ -44,6 +45,8 @@ from PIL import Image, ImageDraw
 
 from keepawake import KeepAwake
 from updater import Updater, get_launch_at_login, set_launch_at_login
+
+log = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent
 
@@ -285,22 +288,23 @@ class TrayApp:
 
     def _make_menu(self) -> pystray.Menu:
         """Build the right-click menu. Called each time the menu opens."""
-        alive, total = self.nodes.alive_count()
-
         update_label = (
-            f"Update to v{self.update_available} -- Click to install"
+            f"Update to v{self.update_available} — Click to install"
             if self.update_available
             else f"Up to date (v{self.updater.current_version})"
         )
 
-        launch_label = (
-            "Launch at Login: On" if get_launch_at_login() else "Launch at Login: Off"
-        )
+        relay_status = "Connected" if self._relay_connected else "Off"
 
         return pystray.Menu(
             # Status (non-clickable)
             pystray.MenuItem(
                 f"Network: {self.nodes.status_text()}",
+                None,
+                enabled=False,
+            ),
+            pystray.MenuItem(
+                f"Relay: {relay_status}",
                 None,
                 enabled=False,
             ),
@@ -326,27 +330,14 @@ class TrayApp:
 
             pystray.Menu.SEPARATOR,
 
+            # Settings
+            pystray.MenuItem("Open Settings", self._on_open_settings),
+
+            pystray.Menu.SEPARATOR,
+
             # Updates
             pystray.MenuItem(update_label, self._on_update_click),
             pystray.MenuItem("Check for Updates Now", self._on_check_updates),
-
-            pystray.Menu.SEPARATOR,
-
-            # Relay
-            pystray.MenuItem(
-                f"Remote Relay: {'Connected' if self._relay_connected else 'Off'}",
-                self._on_toggle_relay,
-                enabled=bool(self._relay_cfg.get("relay_url")),
-            ),
-            pystray.MenuItem(
-                f"Keep Awake: {'On' if self.keep_awake.is_active else 'Off'}",
-                self._on_toggle_keep_awake,
-            ),
-
-            pystray.Menu.SEPARATOR,
-
-            # Startup
-            pystray.MenuItem(launch_label, self._on_toggle_launch_at_login),
 
             pystray.Menu.SEPARATOR,
 
@@ -385,24 +376,14 @@ class TrayApp:
         if self.update_available:
             threading.Thread(target=self._do_apply_update, daemon=True).start()
 
-    def _on_toggle_launch_at_login(self, icon=None, item=None) -> None:
-        current = get_launch_at_login()
-        set_launch_at_login(not current)
-        self._refresh_icon()
-
-    def _on_toggle_relay(self, icon=None, item=None) -> None:
-        if self._relay_connected:
-            self._stop_relay()
+    def _on_open_settings(self, icon=None, item=None) -> None:
+        """Open the settings window in a separate process to avoid event-loop conflicts."""
+        if getattr(sys, "frozen", False):
+            # Frozen app: re-launch the same executable with --settings flag
+            subprocess.Popen([sys.executable, "--settings"])
         else:
-            self._start_relay()
-        self._refresh_icon()
-
-    def _on_toggle_keep_awake(self, icon=None, item=None) -> None:
-        if self.keep_awake.is_active:
-            self.keep_awake.stop()
-        else:
-            self.keep_awake.start()
-        self._refresh_icon()
+            # Source mode: run settings_ui.py directly
+            subprocess.Popen([sys.executable, str(BASE_DIR / "settings_ui.py")])
 
     def _on_quit(self, icon=None, item=None) -> None:
         self._stop_relay()
@@ -462,6 +443,8 @@ class TrayApp:
         """Start the background relay polling thread."""
         if self._relay_connected:
             return
+        # Reload config from disk so settings changes take effect
+        self._relay_cfg = _load_relay_config()
         cfg = self._relay_cfg
         if not cfg.get("relay_url") or not cfg.get("api_key"):
             self._refresh_icon(notify="Configure relay_config.yaml first")

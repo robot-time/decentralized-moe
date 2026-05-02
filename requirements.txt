@@ -8,5 +8,8 @@ pyyaml>=6.0
 pystray>=0.19.5
 Pillow>=10.0.0
 
+# macOS tray backend (pystray requires pyobjc on macOS)
+pyobjc>=9.0; sys_platform == "darwin"
+
 # Update system + ask.py
 requests>=2.31.0
