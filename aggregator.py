@@ -32,6 +32,7 @@ class SpecialistReply:
     specialty: str
     label:     str
     response:  str  # may be DOMAIN_MISMATCH or an error string
+    url:       str = ""  # origin peer URL
 
 
 @dataclass
@@ -58,6 +59,7 @@ async def _ask_one(
                 specialty=data.get("specialty", peer.specialty),
                 label=data.get("label", peer.label),
                 response=data.get("response", ""),
+                url=peer.url,
             )
     except Exception as exc:
         # A peer that times out or 500s is treated as "didn't claim it"
@@ -65,6 +67,7 @@ async def _ask_one(
             specialty=peer.specialty,
             label=peer.label,
             response=f"ERROR: {exc}",
+            url=peer.url,
         )
 
 

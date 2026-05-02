@@ -27,6 +27,10 @@ from typing import Optional
 GITHUB_API = "https://api.github.com/repos/robot-time/decentralized-moe/releases/latest"
 REPO_URL   = "https://github.com/robot-time/decentralized-moe/releases/latest"
 
+# Simple in-memory cache for the GitHub API response (avoid 60 req/hr rate limit)
+_cache: dict = {}
+_CACHE_TTL_SEC = 300
+
 
 def _current_version() -> str:
     """Read version from version.txt (bundled or dev)."""
@@ -78,7 +82,10 @@ def _app_path() -> Path:
 
 
 async def check_latest() -> dict:
-    """Query GitHub API for latest release info."""
+    """Query GitHub API for latest release info (cached for 5 min)."""
+    now = time.time()
+    if _cache.get("data") and (now - _cache.get("ts", 0)) < _CACHE_TTL_SEC:
+        return dict(_cache["data"])
     try:
         import aiohttp
         async with aiohttp.ClientSession() as session:
@@ -90,7 +97,7 @@ async def check_latest() -> dict:
                 if resp.status != 200:
                     return {"error": f"HTTP {resp.status}"}
                 data = await resp.json()
-                return {
+                payload = {
                     "version": data.get("tag_name", "").lstrip("v"),
                     "url": data.get("html_url", REPO_URL),
                     "assets": {
@@ -99,6 +106,9 @@ async def check_latest() -> dict:
                     },
                     "published": data.get("published_at", ""),
                 }
+                _cache["data"] = payload
+                _cache["ts"] = time.time()
+                return payload
     except Exception as exc:
         return {"error": str(exc)}
 

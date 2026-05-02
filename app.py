@@ -171,11 +171,23 @@ class WebApp:
                 query, replies,
                 synthesis_model=self.cfg.get("aggregator_model", "llama3.1:8b"),
             )
+            # Build origin info so the UI can show local vs remote
+            local_url = self._local_specialist_url
+            seen_labels = set()
+            origins = []
+            for r in replies:
+                if r.label not in answer.consulted or r.label in seen_labels:
+                    continue
+                seen_labels.add(r.label)
+                is_local = bool(local_url and r.url == local_url)
+                host = r.url.replace("http://", "").replace("https://", "").split(":")[0] if r.url else "unknown"
+                origins.append({"label": r.label, "local": is_local, "host": host})
             return web.json_response({
                 "text":        answer.text,
                 "consulted":   answer.consulted,
                 "skipped":     answer.skipped,
                 "synthesised": answer.synthesised,
+                "origins":     origins,
             })
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=500)

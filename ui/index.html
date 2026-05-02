@@ -467,14 +467,21 @@ function addUserBubble(text) {
   scrollBottom();
 }
 
-function addAiBubble(text, label) {
+function addAiBubble(text, label, origins) {
   welcome.style.display = 'none';
   const div = document.createElement('div');
   div.className = 'msg msg-ai';
+  let originHtml = '';
+  if (origins && origins.length) {
+    const parts = origins.map(o => o.local ? 'this device' : o.host);
+    const unique = [...new Set(parts)];
+    originHtml = `<div class="origin" style="font-size:11px;color:var(--fg-muted);margin-bottom:4px;">From ${escapeHtml(unique.join(', '))}</div>`;
+  }
   div.innerHTML = `
     <div class="avatar">${label[0].toUpperCase()}</div>
     <div class="content">
       <div class="label">${escapeHtml(label)}</div>
+      ${originHtml}
       <div class="bubble">${escapeHtml(text)}</div>
     </div>`;
   chat.appendChild(div);
@@ -528,9 +535,9 @@ async function sendMessage() {
       if (el.textContent.includes('Routing')) el.remove();
     });
     if (data.consulted && data.consulted.length) {
-      addAiBubble(data.text, data.consulted.join(', '));
+      addAiBubble(data.text, data.consulted.join(', '), data.origins);
     } else {
-      addAiBubble(data.text, 'MoE');
+      addAiBubble(data.text, 'MoE', data.origins);
     }
     if (data.skipped && data.skipped.length) {
       addInfo('Skipped: ' + data.skipped.join(', '));
