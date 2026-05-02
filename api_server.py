@@ -25,7 +25,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app_paths import FIRST_RUN_SENTINEL, copy_default_experts, ensure_dirs
@@ -35,7 +35,7 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 BASE_DIR  = Path(__file__).parent
-UI_DIST   = BASE_DIR / "ui" / "dist"
+UI_INDEX  = BASE_DIR / "ui" / "index.html"
 API_PORT  = 8080
 NODE_URL  = "http://localhost:8001"  # math node is the default orchestrator
 
@@ -195,15 +195,11 @@ async def chat(req: ChatRequest):
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
 
-# ── Static files (React build) ────────────────────────────────────────────────
-# Mounted last so API routes take priority.
+# ── Serve the single-file UI ──────────────────────────────────────────────────
 
-if UI_DIST.exists():
-    app.mount("/", StaticFiles(directory=str(UI_DIST), html=True), name="ui")
-else:
-    @app.get("/")
-    async def ui_not_built():
-        return {"error": "UI not built. Run: cd ui && npm install && npm run build"}
+@app.get("/")
+async def serve_ui():
+    return FileResponse(str(UI_INDEX))
 
 
 # ── Startup / shutdown ────────────────────────────────────────────────────────

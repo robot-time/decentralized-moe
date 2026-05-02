@@ -64,24 +64,15 @@ def generate_icon() -> Path | None:
     return ico_path if sys.platform == "win32" else png_path
 
 
-# ── Step 1: React UI ──────────────────────────────────────────────────────────
+# ── Step 1: UI (single file, no build needed) ─────────────────────────────────
 
 def build_ui() -> None:
-    print("\n[1/3] Building React UI...")
-    ui_dir = ROOT / "ui"
-    if not ui_dir.exists():
-        print("  ERROR: ui/ directory not found")
+    print("\n[1/3] Checking UI...")
+    ui_index = ROOT / "ui" / "index.html"
+    if not ui_index.exists():
+        print("  ERROR: ui/index.html not found")
         sys.exit(1)
-
-    npm = "npm.cmd" if sys.platform == "win32" else "npm"
-    run([npm, "install"], cwd=ui_dir)
-    run([npm, "run", "build"], cwd=ui_dir)
-
-    dist = ui_dir / "dist"
-    if not dist.exists():
-        print("  ERROR: ui/dist/ not created by npm build")
-        sys.exit(1)
-    print(f"  React build complete -> {dist}")
+    print(f"  UI ready (single-file, no build step) -> {ui_index}")
 
 
 # ── Step 2: Python backend (PyInstaller) ──────────────────────────────────────
@@ -97,8 +88,8 @@ def build_backend(icon_path: Path | None) -> None:
         "--console",             # keep console for now; switch to --windowed once stable
         "--name", "backend",
 
-        # Bundle the React UI so the server can serve it
-        f"--add-data=ui/dist{sep}ui/dist",
+        # Bundle the single-file UI
+        f"--add-data=ui/index.html{sep}ui",
         # Bundle default expert configs
         f"--add-data=experts{sep}experts",
 
