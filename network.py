@@ -57,15 +57,40 @@ class Peer:
 
 def _local_ip() -> str:
     """Best-effort local LAN IP (so peers reach us, not 127.0.0.1)."""
+    # Try the UDP socket trick first (fastest)
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(2)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
-        return ip
+        if ip and not ip.startswith("127."):
+            return ip
     except Exception:
-        return "127.0.0.1"
+        pass
+
+    # Fallback: enumerate network interfaces
+    try:
+        import psutil
+        for iface, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.family == socket.AF_INET:
+                    ip = addr.address
+                    if ip and not ip.startswith(("127.", "169.254")):
+                        return ip
+    except Exception:
+        pass
+
+    # Final fallback
+    try:
+        hostname = socket.gethostname()
+        ip = socket.getaddrinfo(hostname, None, socket.AF_INET)[0][4][0]
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+
+    return "127.0.0.1"
 
 
 class Network:
@@ -93,6 +118,7 @@ class Network:
         self._node_id      = (
             f"{_local_ip()}:{my_http_port}" if my_http_port else None
         )
+        self._lan_sock: Optional[socket.socket] = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -102,14 +128,23 @@ class Network:
             host, _, port = self.bootstrap.partition(":")
             try:
                 await self._server.bootstrap([(host, int(port or 8468))])
+                print(f"[network] bootstrapped via {host}:{port or 8468}")
             except Exception as exc:
                 print(f"[network] bootstrap to {self.bootstrap} failed: {exc}")
         self._running = True
         asyncio.create_task(self._refresh_loop())
+        # If no bootstrap, also do UDP LAN broadcast for local discovery
+        if not self.bootstrap:
+            self._start_lan_broadcast()
 
     async def stop(self) -> None:
         self._running = False
         self._server.stop()
+        if self._lan_sock:
+            try:
+                self._lan_sock.close()
+            except Exception:
+                pass
 
     # ── Register/refresh ──────────────────────────────────────────────────
 
@@ -144,6 +179,62 @@ class Network:
         peers  = [p for p in peers if float(p.get("last_seen", 0)) >= cutoff]
 
         await self._server.set(PEER_LIST_KEY, json.dumps(peers))
+
+    # ── LAN Broadcast (bootstrap-less LAN discovery) ────────────────────────
+
+    def _start_lan_broadcast(self) -> None:
+        """Broadcast UDP beacons on the LAN so peers find each other
+        without a bootstrap node.  Purely additive — doesn't replace DHT."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setblocking(False)
+            self._lan_sock = sock
+            asyncio.create_task(self._lan_broadcast_loop())
+            asyncio.create_task(self._lan_listen_loop())
+        except Exception as exc:
+            print(f"[network] LAN broadcast setup failed: {exc}")
+
+    async def _lan_broadcast_loop(self) -> None:
+        """Send a UDP beacon every 5 seconds."""
+        beacon = json.dumps({
+            "type": "moe_beacon",
+            "dht_port": self.dht_port,
+            "specialty": self.my_specialty,
+            "label": self.my_label,
+        }).encode()
+        while self._running and self._lan_sock:
+            try:
+                self._lan_sock.sendto(beacon, ("<broadcast>", self.dht_port))
+            except Exception:
+                pass
+            await asyncio.sleep(5)
+
+    async def _lan_listen_loop(self) -> None:
+        """Listen for incoming beacons and bootstrap to their senders."""
+        try:
+            self._lan_sock.bind(("0.0.0.0", self.dht_port))
+        except Exception:
+            return
+        while self._running and self._lan_sock:
+            try:
+                data, addr = self._lan_sock.recvfrom(1024)
+                msg = json.loads(data.decode())
+                if msg.get("type") == "moe_beacon":
+                    peer_ip = addr[0]
+                    peer_port = msg.get("dht_port", self.dht_port)
+                    # Don't bootstrap to ourselves
+                    if peer_ip != _local_ip():
+                        try:
+                            await self._server.bootstrap([(peer_ip, peer_port)])
+                            print(f"[network] LAN peer discovered: {peer_ip}:{peer_port}")
+                        except Exception:
+                            pass
+            except BlockingIOError:
+                await asyncio.sleep(0.1)
+            except Exception:
+                await asyncio.sleep(1)
 
     # ── Discovery ─────────────────────────────────────────────────────────
 

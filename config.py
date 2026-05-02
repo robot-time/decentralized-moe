@@ -67,6 +67,9 @@ DEFAULTS: dict[str, Any] = {
 
     # Has the first-run setup wizard been completed?
     "wizard_done": False,
+
+    # Prevent system sleep while the app is running (so peers can reach us)
+    "keep_awake": True,
 }
 
 

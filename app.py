@@ -27,6 +27,7 @@ from aiohttp import web
 
 from aggregator import aggregate, fan_out
 from config import BUNDLE_DIR, copy_default_experts, ensure_dirs, load, load_expert, save
+from keepawake import KeepAwake
 from network import Network
 from specialist import Specialist
 
@@ -77,6 +78,7 @@ class WebApp:
         self.worker = AsyncWorker()
         self.network: Network | None = None
         self._ready = threading.Event()
+        self._keepawake = KeepAwake()
 
     # ── Handlers ────────────────────────────────────────────────────────
 
@@ -100,7 +102,7 @@ class WebApp:
             "label":     expert.get("label") if expert else None,
             "model":     expert.get("model") if expert else None,
             "dht_port":  self.cfg.get("dht_port", 8468),
-            "version":   "1.4.0",
+            "version":   "1.5.0",
         })
 
     async def handle_config_get(self, request: web.Request) -> web.Response:
@@ -117,7 +119,7 @@ class WebApp:
         except Exception:
             return web.json_response({"error": "invalid json"}, status=400)
         allowed = {"role", "bootstrap", "dht_port", "http_port",
-                   "aggregator_model", "wizard_done"}
+                   "aggregator_model", "wizard_done", "keep_awake"}
         for key in allowed:
             if key in body:
                 self.cfg[key] = body[key]
@@ -228,6 +230,8 @@ class WebApp:
     # ── Entry ───────────────────────────────────────────────────────────
 
     def run(self) -> None:
+        if self.cfg.get("keep_awake", True):
+            self._keepawake.start()
         self.worker.start()
         self.worker.submit(self._run_server())
         print("[main] waiting for server to be ready...")
@@ -241,7 +245,10 @@ class WebApp:
             print("[main] ERROR: server not responding to HTTP requests")
             sys.exit(1)
         print("[main] server ready, opening window")
-        self._open_window()
+        try:
+            self._open_window()
+        finally:
+            self._keepawake.stop()
 
     def _poll_server(self) -> bool:
         for _ in range(20):

@@ -402,7 +402,24 @@
       <div class="modal-row">
         <label>Bootstrap peer (host:port)</label>
         <input type="text" id="set-bootstrap" placeholder="e.g. 192.168.1.10:8468">
-        <div style="font-size:11px;color:var(--fg-muted);margin-top:4px;">Leave blank for LAN-only</div>
+        <div style="font-size:11px;color:var(--fg-muted);margin-top:4px;">Leave blank for LAN-only auto-discovery</div>
+      </div>
+      <div class="modal-row">
+        <label>DHT port</label>
+        <input type="number" id="set-dht-port" placeholder="8468">
+      </div>
+      <div class="modal-row">
+        <label>HTTP port (specialist)</label>
+        <input type="number" id="set-http-port" placeholder="8001">
+      </div>
+      <div class="modal-row">
+        <label>Synthesis model</label>
+        <input type="text" id="set-aggregator" placeholder="llama3.1:8b">
+        <div style="font-size:11px;color:var(--fg-muted);margin-top:4px;">Model used to combine multiple specialist answers</div>
+      </div>
+      <div class="modal-row" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="set-keep-awake" style="width:auto;">
+        <label for="set-keep-awake" style="margin-bottom:0;font-weight:400;">Prevent system sleep while running</label>
       </div>
     </div>
     <div class="modal-actions">
@@ -554,6 +571,10 @@ async function openSettings() {
     currentConfig = await res.json();
     $('set-role').value = currentConfig.role || 'user';
     $('set-bootstrap').value = currentConfig.bootstrap || '';
+    $('set-dht-port').value = currentConfig.dht_port || 8468;
+    $('set-http-port').value = currentConfig.http_port || 8001;
+    $('set-aggregator').value = currentConfig.aggregator_model || 'llama3.1:8b';
+    $('set-keep-awake').checked = currentConfig.keep_awake !== false;
     modal.classList.add('open');
   } catch (e) {
     addError('Could not load settings');
@@ -565,6 +586,10 @@ $('set-save').addEventListener('click', async () => {
     ...currentConfig,
     role: $('set-role').value,
     bootstrap: $('set-bootstrap').value.trim(),
+    dht_port: parseInt($('set-dht-port').value) || 8468,
+    http_port: parseInt($('set-http-port').value) || 8001,
+    aggregator_model: ($('set-aggregator').value || 'llama3.1:8b').trim(),
+    keep_awake: $('set-keep-awake').checked,
   };
   try {
     await fetch('/api/config', {
