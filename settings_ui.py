@@ -18,6 +18,7 @@ Standalone use:
 Or launched by the frozen bundle with the --settings flag.
 """
 
+import subprocess
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -27,6 +28,8 @@ import yaml
 
 from app_paths import APP_DIR
 from updater import get_launch_at_login, set_launch_at_login
+
+BASE_DIR = Path(__file__).parent
 
 # ── Palette (matches setup_wizard.py) ────────────────────────────────────────
 BG       = "#0d0d0d"
@@ -260,8 +263,19 @@ class SettingsWindow(tk.Tk):
         _btn(btn_bar, "Save", self._apply, primary=True).pack(
             side="right", padx=(0, 4), pady=12
         )
+        _btn(btn_bar, "Run Setup Wizard", self._run_wizard, primary=False).pack(
+            side="left", padx=12, pady=12
+        )
 
     # ── Save ──────────────────────────────────────────────────────────────
+
+    def _run_wizard(self):
+        """Spawn the setup wizard in a fresh process, then close settings."""
+        if getattr(sys, "frozen", False):
+            subprocess.Popen([sys.executable, "--wizard"])
+        else:
+            subprocess.Popen([sys.executable, str(BASE_DIR / "main.py"), "--wizard"])
+        self.destroy()
 
     def _apply(self):
         # Validate poll timeout

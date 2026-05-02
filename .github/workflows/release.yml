@@ -54,6 +54,15 @@ jobs:
       - name: Build with PyInstaller
         run: python build.py
 
+      - name: Ad-hoc sign macOS app
+        if: matrix.os == 'macos-latest'
+        run: |
+          # Remove any quarantine flags from the CI environment first
+          xattr -cr dist/MoE-Network.app || true
+          # Ad-hoc sign (-) so Gatekeeper sees a valid signature and won't
+          # report the app as "damaged".  Does NOT require an Apple account.
+          codesign --deep --force --sign - dist/MoE-Network.app
+
       - name: Zip macOS app
         if: matrix.os == 'macos-latest'
         run: cd dist && zip -r ../${{ matrix.zip_name }} MoE-Network.app

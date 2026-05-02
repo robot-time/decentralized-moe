@@ -43,6 +43,7 @@ import pystray
 import yaml
 from PIL import Image, ImageDraw
 
+from app_paths import APP_DIR
 from keepawake import KeepAwake
 from updater import Updater, get_launch_at_login, set_launch_at_login
 
@@ -162,15 +163,23 @@ class NodeManager:
             if self.processes:
                 return  # already running
 
-            # Find all expert YAMLs; sort alphabetically so math.yaml (bootstrap) goes first
-            yaml_paths = sorted(BASE_DIR.glob("experts/*.yaml")) + \
-                         sorted(BASE_DIR.glob("experts/*.yml"))
+            # Expert YAMLs live in the user's app-data folder (APP_DIR/experts).
+            # Never read from _MEIPASS -- those are bundled defaults, not user config.
+            experts_dir = APP_DIR / "experts"
+            yaml_paths = sorted(experts_dir.glob("*.yaml")) + \
+                         sorted(experts_dir.glob("*.yml"))
             self.yaml_paths = yaml_paths
 
             for i, yaml_path in enumerate(yaml_paths):
+                # When frozen the executable IS the Python runtime.
+                # Pass --node <yaml> so main.py dispatches to node.py logic.
+                if getattr(sys, "frozen", False):
+                    cmd = [sys.executable, "--node", str(yaml_path)]
+                else:
+                    cmd = [sys.executable, str(BASE_DIR / "node.py"), str(yaml_path)]
+
                 proc = subprocess.Popen(
-                    [sys.executable, str(BASE_DIR / "node.py"), str(yaml_path)],
-                    cwd=BASE_DIR,
+                    cmd,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
@@ -203,9 +212,13 @@ def open_ask_terminal(node_url: Optional[str] = None) -> None:
     """
     Open a terminal window running ask.py connected to the network.
     Works on Windows, macOS, and Linux.
+    In frozen mode the executable is re-launched with --ask so main.py
+    dispatches to ask.main() without needing a separate .py file.
     """
-    ask_script = str(BASE_DIR / "ask.py")
-    cmd_args = [sys.executable, ask_script]
+    if getattr(sys, "frozen", False):
+        cmd_args = [sys.executable, "--ask"]
+    else:
+        cmd_args = [sys.executable, str(BASE_DIR / "ask.py")]
     if node_url:
         cmd_args.append(node_url)
 
@@ -213,8 +226,10 @@ def open_ask_terminal(node_url: Optional[str] = None) -> None:
         subprocess.Popen(["cmd", "/k"] + cmd_args, creationflags=subprocess.CREATE_NEW_CONSOLE)
 
     elif sys.platform == "darwin":
-        # Write a temp shell script and open it in Terminal.app
-        tmp = BASE_DIR / "_open_terminal.sh"
+        # Write a temp shell script and open it in Terminal.app.
+        # Use APP_DIR (user-writable) rather than BASE_DIR which may be
+        # a read-only _MEIPASS temp directory when running frozen.
+        tmp = APP_DIR / "_open_terminal.sh"
         tmp.write_text(f"#!/bin/bash\n{' '.join(cmd_args)}\n")
         tmp.chmod(0o755)
         subprocess.Popen(["open", "-a", "Terminal", str(tmp)])
@@ -415,8 +430,13 @@ class TrayApp:
         self.nodes.stop()
         success = self.updater.apply(download_url)
         if success:
-            # Re-exec tray.py with the new code
-            os.execv(sys.executable, [sys.executable, str(BASE_DIR / "tray.py")])
+            # Re-exec to pick up the new code.
+            # Frozen: just re-launch the executable.
+            # Source: re-run tray.py directly.
+            if getattr(sys, "frozen", False):
+                os.execv(sys.executable, [sys.executable])
+            else:
+                os.execv(sys.executable, [sys.executable, str(BASE_DIR / "tray.py")])
         else:
             self.nodes.start()
 
