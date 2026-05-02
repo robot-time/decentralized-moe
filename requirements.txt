@@ -7,3 +7,6 @@ ollama>=0.2.0
 
 # Config parsing
 pyyaml>=6.0
+
+# Webview desktop wrapper
+pywebview>=5.0

@@ -77,27 +77,57 @@ def _label(parent, text, font=FONT_BODY, color=FG, **kw):
 
 def _check_ollama() -> tuple[bool, str]:
     """Return (installed, version_or_error)."""
-    try:
-        r = subprocess.run(
-            ["ollama", "--version"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if r.returncode == 0:
-            return True, r.stdout.strip().splitlines()[0]
-    except FileNotFoundError:
-        return False, "Ollama not found in PATH"
-    except Exception as exc:
-        return False, str(exc)
-    return False, "Unknown error"
+    candidates = ["ollama"]
+    if sys.platform == "darwin":
+        candidates += [
+            "/usr/local/bin/ollama",
+            "/opt/homebrew/bin/ollama",
+            "/Applications/Ollama.app/Contents/MacOS/ollama",
+        ]
+
+    for exe in candidates:
+        try:
+            r = subprocess.run(
+                [exe, "--version"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode == 0:
+                return True, r.stdout.strip().splitlines()[0]
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            return False, str(exc)
+    return False, "Ollama not found in PATH"
+
+
+def _ollama_exe() -> str | None:
+    """Return the path to the ollama binary, or None."""
+    candidates = ["ollama"]
+    if sys.platform == "darwin":
+        candidates += [
+            "/usr/local/bin/ollama",
+            "/opt/homebrew/bin/ollama",
+            "/Applications/Ollama.app/Contents/MacOS/ollama",
+        ]
+    for exe in candidates:
+        try:
+            r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                return exe
+        except FileNotFoundError:
+            continue
+        except Exception:
+            break
+    return None
 
 
 def _list_models() -> list[str]:
     """Return installed model names."""
+    exe = _ollama_exe()
+    if not exe:
+        return []
     try:
-        r = subprocess.run(
-            ["ollama", "list"],
-            capture_output=True, text=True, timeout=15,
-        )
+        r = subprocess.run([exe, "list"], capture_output=True, text=True, timeout=15)
         if r.returncode != 0:
             return []
         names = []
@@ -370,9 +400,13 @@ class Wizard(tk.Tk):
             self._pull_threads.append(t)
 
     def _pull_one(self, name: str) -> None:
+        exe = _ollama_exe()
+        if not exe:
+            self.after(0, lambda n=name: self._pull_failed(n, "Ollama not found"))
+            return
         try:
             proc = subprocess.Popen(
-                ["ollama", "pull", name],
+                [exe, "pull", name],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

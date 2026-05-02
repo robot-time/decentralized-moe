@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MoE Network</title>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --sidebar: #171717;
+    --surface: #1a1a1a;
+    --surface-2: #262626;
+    --border: #2e2e2e;
+    --fg: #e5e5e5;
+    --fg-dim: #a1a1a1;
+    --fg-muted: #525252;
+    --accent: #ffffff;
+    --accent-fg: #000000;
+    --user-bg: #262626;
+    --ai-bg: #1a1a1a;
+    --ai-border: #333333;
+    --specialist: #60a5fa;
+    --error: #ef4444;
+    --success: #22c55e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    height: 100vh;
+    display: flex;
+    overflow: hidden;
+  }
+  /* Sidebar */
+  #sidebar {
+    width: 260px;
+    background: var(--sidebar);
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #sidebar .title {
+    padding: 20px 16px 10px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--fg);
+  }
+  #btn-new {
+    margin: 8px 12px 16px;
+    padding: 10px;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  #btn-new:hover { background: #e5e5e5; }
+  .divider { height: 1px; background: var(--border); margin: 0 12px; }
+  .section-header {
+    padding: 16px 16px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  #peers-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 8px;
+  }
+  .peer-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--fg-dim);
+    cursor: default;
+  }
+  .peer-item:hover { background: var(--surface-2); }
+  .peer-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+  .role-info {
+    padding: 10px 16px;
+    font-size: 11px;
+    color: var(--fg-muted);
+    line-height: 1.5;
+  }
+  #btn-settings {
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--fg-dim);
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #btn-settings:hover { color: var(--fg); }
+  /* Main */
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  #header {
+    height: 52px;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #header-title { font-size: 14px; font-weight: 700; }
+  #header-model { font-size: 12px; color: var(--fg-dim); margin-left: 8px; }
+  .spacer { flex: 1; }
+  /* Chat */
+  #chat-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 20px;
+  }
+  #chat {
+    max-width: 768px;
+    margin: 0 auto;
+    padding: 20px 0;
+    min-height: 100%;
+  }
+  /* Welcome */
+  #welcome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    text-align: center;
+  }
+  #welcome h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--fg);
+    margin-bottom: 24px;
+  }
+  .suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    max-width: 600px;
+  }
+  .suggestion {
+    background: var(--surface);
+    color: var(--fg-dim);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .suggestion:hover { background: var(--surface-2); color: var(--fg); }
+  /* Messages */
+  .msg { margin-bottom: 20px; }
+  .msg-user { display: flex; justify-content: flex-end; }
+  .msg-user .bubble {
+    background: var(--user-bg);
+    padding: 12px 16px;
+    border-radius: 14px;
+    max-width: 80%;
+    font-size: 14px;
+    line-height: 1.5;
+    word-wrap: break-word;
+  }
+  .msg-ai { display: flex; gap: 12px; }
+  .msg-ai .avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--specialist);
+    color: var(--bg);
+    font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .msg-ai .content { flex: 1; min-width: 0; }
+  .msg-ai .label {
+    font-size: 12px; font-weight: 600;
+    color: var(--specialist);
+    margin-bottom: 4px;
+  }
+  .msg-ai .bubble {
+    background: var(--ai-bg);
+    border: 1px solid var(--ai-border);
+    padding: 12px 16px;
+    border-radius: 14px;
+    font-size: 14px;
+    line-height: 1.6;
+    word-wrap: break-word;
+    max-width: 100%;
+  }
+  .msg-info {
+    font-size: 11px;
+    color: var(--fg-muted);
+    padding: 4px 0 8px;
+  }
+  .msg-error {
+    font-size: 13px;
+    color: var(--error);
+    padding: 8px 0;
+  }
+  /* Typing */
+  .typing .bubble::after {
+    content: "";
+    display: inline-block;
+    width: 3px; height: 14px;
+    background: var(--fg-dim);
+    margin-left: 4px;
+    animation: blink 1s infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  /* Input */
+  #input-area {
+    padding: 16px 20px 20px;
+    flex-shrink: 0;
+  }
+  #input-wrap {
+    max-width: 768px;
+    margin: 0 auto;
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 10px 14px;
+  }
+  #input-wrap:focus-within { border-color: var(--fg-muted); }
+  textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--fg);
+    font-size: 14px;
+    line-height: 1.5;
+    resize: none;
+    outline: none;
+    max-height: 200px;
+    font-family: inherit;
+    padding: 4px 0;
+  }
+  #btn-send {
+    background: none;
+    border: none;
+    color: var(--fg-dim);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 8px;
+  }
+  #btn-send:hover { color: var(--fg); }
+  #btn-send.active { color: var(--accent); }
+  /* Status */
+  #status {
+    text-align: center;
+    font-size: 11px;
+    color: var(--fg-muted);
+    padding: 4px 0;
+  }
+  /* Settings modal */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: 420px;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .modal-header {
+    padding: 20px 20px 0;
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .modal-body { padding: 16px 20px; }
+  .modal-row { margin-bottom: 16px; }
+  .modal-row label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 6px;
+  }
+  .modal-row input, .modal-row select {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--fg);
+    font-size: 13px;
+    outline: none;
+  }
+  .modal-row input:focus, .modal-row select:focus { border-color: var(--fg-dim); }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 0 20px 20px;
+  }
+  .modal-actions button {
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+  }
+  .btn-secondary { background: var(--surface-2); color: var(--fg); }
+  .btn-primary { background: var(--accent); color: var(--accent-fg); }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="title">MoE Network</div>
+  <button id="btn-new">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    New Chat
+  </button>
+  <div class="divider"></div>
+  <div class="section-header">Specialists</div>
+  <div id="peers-list"></div>
+  <div id="role-info" class="role-info"></div>
+  <button id="btn-settings">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.67 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.67a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 20.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    Settings
+  </button>
+</div>
+
+<div id="main">
+  <div id="header">
+    <span id="header-title">MoE Network</span>
+    <span id="header-model"></span>
+    <span class="spacer"></span>
+  </div>
+
+  <div id="chat-scroll">
+    <div id="chat">
+      <div id="welcome">
+        <h1>What can I help you with?</h1>
+        <div class="suggestions">
+          <div class="suggestion" data-text="Explain quantum computing simply">Explain quantum computing</div>
+          <div class="suggestion" data-text="What caused the French Revolution?">French Revolution</div>
+          <div class="suggestion" data-text="Solve 2x + 5 = 15 step by step">Solve an equation</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="status">Connecting…</div>
+
+  <div id="input-area">
+    <div id="input-wrap">
+      <textarea id="msg-input" rows="1" placeholder="Message MoE Network…"></textarea>
+      <button id="btn-send">➤</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="settings-modal">
+  <div class="modal">
+    <div class="modal-header">Settings</div>
+    <div class="modal-body">
+      <div class="modal-row">
+        <label>Role</label>
+        <select id="set-role">
+          <option value="user">Chat only</option>
+          <option value="stem">STEM specialist</option>
+          <option value="hass">HASS specialist</option>
+        </select>
+      </div>
+      <div class="modal-row">
+        <label>Bootstrap peer (host:port)</label>
+        <input type="text" id="set-bootstrap" placeholder="e.g. 192.168.1.10:8468">
+        <div style="font-size:11px;color:var(--fg-muted);margin-top:4px;">Leave blank for LAN-only</div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="set-cancel">Cancel</button>
+      <button class="btn-primary" id="set-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const chat = $('chat');
+const welcome = $('welcome');
+const input = $('msg-input');
+const btnSend = $('btn-send');
+const peersList = $('peers-list');
+const status = $('status');
+let busy = false;
+
+/* ---------- Helpers ---------- */
+function scrollBottom() {
+  $('chat-scroll').scrollTop = $('chat-scroll').scrollHeight;
+}
+
+function addUserBubble(text) {
+  welcome.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'msg msg-user';
+  div.innerHTML = `<div class="bubble">${escapeHtml(text)}</div>`;
+  chat.appendChild(div);
+  scrollBottom();
+}
+
+function addAiBubble(text, label) {
+  welcome.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'msg msg-ai';
+  div.innerHTML = `
+    <div class="avatar">${label[0].toUpperCase()}</div>
+    <div class="content">
+      <div class="label">${escapeHtml(label)}</div>
+      <div class="bubble">${escapeHtml(text)}</div>
+    </div>`;
+  chat.appendChild(div);
+  scrollBottom();
+}
+
+function addInfo(text) {
+  welcome.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'msg-info';
+  div.textContent = text;
+  chat.appendChild(div);
+  scrollBottom();
+}
+
+function addError(text) {
+  welcome.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'msg-error';
+  div.textContent = text;
+  chat.appendChild(div);
+  scrollBottom();
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ---------- Send ---------- */
+async function sendMessage() {
+  if (busy) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  input.style.height = 'auto';
+  addUserBubble(text);
+  addInfo('Routing through the network…');
+  busy = true;
+  btnSend.classList.remove('active');
+
+  try {
+    const res = await fetch('/api/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: text }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    // Remove info lines
+    chat.querySelectorAll('.msg-info').forEach(el => {
+      if (el.textContent.includes('Routing')) el.remove();
+    });
+    if (data.consulted && data.consulted.length) {
+      addAiBubble(data.text, data.consulted.join(', '));
+    } else {
+      addAiBubble(data.text, 'MoE');
+    }
+    if (data.skipped && data.skipped.length) {
+      addInfo('Skipped: ' + data.skipped.join(', '));
+    }
+  } catch (e) {
+    chat.querySelectorAll('.msg-info').forEach(el => {
+      if (el.textContent.includes('Routing')) el.remove();
+    });
+    addError('Error: ' + e.message);
+  }
+  busy = false;
+}
+
+btnSend.addEventListener('click', sendMessage);
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = input.scrollHeight + 'px';
+  btnSend.classList.toggle('active', input.value.trim().length > 0);
+});
+
+/* ---------- Suggestions ---------- */
+document.querySelectorAll('.suggestion').forEach(btn => {
+  btn.addEventListener('click', () => {
+    input.value = btn.dataset.text;
+    input.focus();
+    btnSend.classList.add('active');
+  });
+});
+
+/* ---------- New Chat ---------- */
+$('btn-new').addEventListener('click', () => {
+  chat.innerHTML = '';
+  welcome.style.display = 'flex';
+  chat.appendChild(welcome);
+});
+
+/* ---------- Settings ---------- */
+const modal = $('settings-modal');
+$('btn-settings').addEventListener('click', openSettings);
+$('btn-settings-top')?.addEventListener('click', openSettings);
+$('set-cancel').addEventListener('click', () => modal.classList.remove('open'));
+modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('open'); });
+
+let currentConfig = {};
+
+async function openSettings() {
+  try {
+    const res = await fetch('/api/config');
+    currentConfig = await res.json();
+    $('set-role').value = currentConfig.role || 'user';
+    $('set-bootstrap').value = currentConfig.bootstrap || '';
+    modal.classList.add('open');
+  } catch (e) {
+    addError('Could not load settings');
+  }
+}
+
+$('set-save').addEventListener('click', async () => {
+  const cfg = {
+    ...currentConfig,
+    role: $('set-role').value,
+    bootstrap: $('set-bootstrap').value.trim(),
+  };
+  try {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    modal.classList.remove('open');
+    addInfo('Settings saved. Restart for role/port changes to take effect.');
+    loadConfig();
+  } catch (e) {
+    addError('Failed to save settings');
+  }
+});
+
+/* ---------- Peers ---------- */
+async function loadPeers() {
+  try {
+    const res = await fetch('/api/peers');
+    const peers = await res.json();
+    peersList.innerHTML = '';
+    if (!peers.length) {
+      peersList.innerHTML = '<div class="peer-item">No peers yet</div>';
+      return;
+    }
+    const seen = new Set();
+    for (const p of peers) {
+      const key = p.label + '@' + p.url;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const div = document.createElement('div');
+      div.className = 'peer-item';
+      div.innerHTML = `<div class="peer-dot"></div><div>${escapeHtml(p.label)}</div>`;
+      peersList.appendChild(div);
+    }
+  } catch (e) {
+    peersList.innerHTML = '<div class="peer-item" style="color:var(--error)">Error loading peers</div>';
+  }
+}
+
+/* ---------- Config ---------- */
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config');
+    const cfg = await res.json();
+    const role = cfg.role || 'user';
+    if (role === 'user') {
+      $('role-info').innerHTML = 'Role: Chat only';
+      $('header-model').textContent = '';
+    } else {
+      const label = cfg.expert_label || role.toUpperCase();
+      const model = cfg.expert_model || '?';
+      $('role-info').innerHTML = `Role: ${escapeHtml(label)}<br>Model: ${escapeHtml(model)}`;
+      $('header-model').textContent = ` · ${label} (${model})`;
+    }
+  } catch (e) {
+    status.textContent = 'Disconnected';
+    status.style.color = 'var(--error)';
+  }
+}
+
+/* ---------- Health ---------- */
+async function checkHealth() {
+  try {
+    const res = await fetch('/api/health');
+    if (res.ok) {
+      const d = await res.json();
+      status.textContent = `Connected · ${d.specialty || 'client'} · ${d.model || '?'}`;
+      status.style.color = 'var(--fg-muted)';
+    }
+  } catch (e) {
+    status.textContent = 'Disconnected from backend';
+    status.style.color = 'var(--error)';
+  }
+}
+
+/* ---------- Init ---------- */
+loadConfig();
+checkHealth();
+loadPeers();
+setInterval(loadPeers, 5000);
+setInterval(checkHealth, 10000);
+</script>
+</body>
+</html>

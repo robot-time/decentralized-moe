@@ -1,6 +1,6 @@
 """
-build.py -- PyInstaller wrapper for the simplified MoE Network app
-====================================================================
+build.py -- PyInstaller wrapper
+===============================
 Usage:
     python build.py
 
@@ -18,13 +18,17 @@ def main() -> None:
     here = Path(__file__).parent
     main_py = here / "main.py"
     experts_dir = here / "experts"
+    ui_dir = here / "ui"
+
+    sep = ";" if sys.platform == "win32" else ":"
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
         "--windowed",
         "--name", "MoE-Network",
-        "--add-data", f"{experts_dir}{';' if sys.platform == 'win32' else ':'}experts",
+        "--add-data", f"{experts_dir}{sep}experts",
+        "--add-data", f"{ui_dir}{sep}ui",
         str(main_py),
     ]
 
