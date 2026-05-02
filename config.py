@@ -64,6 +64,9 @@ DEFAULTS: dict[str, Any] = {
 
     # Synthesis model used when multiple specialists return non-mismatch
     "aggregator_model": "llama3.1:8b",
+
+    # Has the first-run setup wizard been completed?
+    "wizard_done": False,
 }
 
 

@@ -4,6 +4,7 @@ main.py -- App Entry Point
 Single entry point for the bundled app.
 
   --specialist stem|hass    Run a specialist server in a subprocess.
+  --wizard                  Re-run the setup wizard.
   (no flags)                Launch the Ollama-style chat UI.
 """
 
@@ -18,6 +19,15 @@ def main() -> None:
         from specialist import run_specialist
         run_specialist(spec)
         return
+
+    # Wizard re-run flag
+    if "--wizard" in sys.argv:
+        from wizard import force_run
+        force_run()
+
+    # First-run wizard
+    from wizard import run_if_needed
+    run_if_needed()
 
     from app import main as app_main
     app_main()
