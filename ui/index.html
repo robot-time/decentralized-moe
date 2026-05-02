@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MoE Network</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: { surface: '#171717', border: '#2a2a2a' }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #app { height: 100%; overflow: hidden; }
+    body { background: #0d0d0d; color: #ececec;
+           font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #404040; border-radius: 3px; }
+
+    @keyframes blink { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
+    .dot { display:inline-block; width:6px; height:6px; border-radius:50%;
+           background:#666; animation: blink 1.4s infinite both; }
+    .dot:nth-child(2){animation-delay:.2s}
+    .dot:nth-child(3){animation-delay:.4s}
+
+    /* markdown */
+    .prose h1,.prose h2,.prose h3{font-weight:600;margin:.75em 0 .4em}
+    .prose h1{font-size:1.3em} .prose h2{font-size:1.15em} .prose h3{font-size:1em}
+    .prose p{margin:.5em 0;line-height:1.7}
+    .prose ul,.prose ol{margin:.5em 0;padding-left:1.5em}
+    .prose li{margin:.2em 0}
+    .prose code{background:#1e1e1e;padding:2px 5px;border-radius:4px;font-size:.85em;font-family:monospace}
+    .prose pre{background:#1e1e1e;border:1px solid #2a2a2a;border-radius:8px;
+               padding:1em;margin:.75em 0;overflow-x:auto}
+    .prose pre code{background:transparent;padding:0}
+    .prose blockquote{border-left:3px solid #333;padding-left:1em;color:#888;margin:.5em 0}
+    .prose table{border-collapse:collapse;width:100%;margin:.5em 0}
+    .prose th,.prose td{border:1px solid #2a2a2a;padding:.4em .75em;text-align:left}
+    .prose th{background:#1a1a1a}
+    .prose a{color:#60a5fa;text-decoration:underline}
+
+    textarea{resize:none;outline:none}
+    textarea::placeholder{color:#555}
+  </style>
+</head>
+<body class="dark">
+<div id="app" class="flex h-full"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let conversations = [];   // [{id, title, messages:[]}]
+let activeId      = null;
+let loading       = false;
+let netStatus     = null; // {running, nodes}
+
+function uid() { return Math.random().toString(36).slice(2); }
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function apiStatus()  { return (await fetch('/api/status')).json(); }
+async function apiStart()   { return (await fetch('/api/nodes/start',{method:'POST'})).json(); }
+async function apiStop()    { return (await fetch('/api/nodes/stop', {method:'POST'})).json(); }
+
+async function* streamChat(message) {
+  const resp = await fetch('/api/chat', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({message})
+  });
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while(true) {
+    const {done, value} = await reader.read();
+    if(done) break;
+    buf += dec.decode(value, {stream:true});
+    const lines = buf.split('\n');
+    buf = lines.pop() ?? '';
+    for(const line of lines) {
+      if(line.trim()) try { yield JSON.parse(line); } catch{}
+    }
+  }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  const app = document.getElementById('app');
+  app.innerHTML = '';
+  app.appendChild(sidebar());
+  app.appendChild(chatPane());
+}
+
+function sidebar() {
+  const el = document.createElement('aside');
+  el.className = 'flex flex-col w-60 shrink-0 h-full border-r';
+  el.style.cssText = 'background:#171717;border-color:#2a2a2a';
+
+  // Header
+  const hdr = el.appendChild(document.createElement('div'));
+  hdr.className = 'flex items-center gap-2 px-4 py-4';
+  hdr.style.borderBottom = '1px solid #2a2a2a';
+  hdr.innerHTML = `
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <circle cx="12" cy="5"  r="2" fill="#3b82f6"/>
+      <circle cx="19" cy="12" r="2" fill="#22c55e"/>
+      <circle cx="12" cy="19" r="2" fill="#f97316"/>
+      <circle cx="5"  cy="12" r="2" fill="#a855f7"/>
+      <circle cx="12" cy="12" r="1.5" fill="white"/>
+      <line x1="12" y1="7"  x2="12" y2="11" stroke="white" stroke-opacity=".4" stroke-width="1"/>
+      <line x1="17" y1="12" x2="13" y2="12" stroke="white" stroke-opacity=".4" stroke-width="1"/>
+      <line x1="12" y1="17" x2="12" y2="13" stroke="white" stroke-opacity=".4" stroke-width="1"/>
+      <line x1="7"  y1="12" x2="11" y2="12" stroke="white" stroke-opacity=".4" stroke-width="1"/>
+    </svg>
+    <span style="font-size:15px;font-weight:600;color:white">MoE Network</span>`;
+
+  // New chat
+  const newBtn = el.appendChild(document.createElement('div'));
+  newBtn.className = 'px-3 pt-3';
+  newBtn.innerHTML = `<button id="btn-new"
+    class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-300 hover:bg-neutral-800 transition-colors">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M12 5v14M5 12h14" stroke-linecap="round"/>
+    </svg>New Chat</button>`;
+  newBtn.querySelector('#btn-new').onclick = () => { newConversation(); render(); };
+
+  // Conversation list
+  const nav = el.appendChild(document.createElement('nav'));
+  nav.className = 'flex-1 overflow-y-auto px-3 py-2';
+  nav.style.gap = '2px';
+  if(conversations.length === 0) {
+    nav.innerHTML = '<p style="color:#555;font-size:12px;text-align:center;padding:16px">No conversations yet</p>';
+  } else {
+    conversations.forEach(c => {
+      const btn = document.createElement('button');
+      btn.className = 'w-full text-left px-3 py-2 rounded-lg text-sm truncate transition-colors mb-0.5';
+      btn.style.cssText = c.id === activeId
+        ? 'background:#262626;color:white'
+        : 'color:#a3a3a3';
+      btn.textContent = c.title;
+      btn.onmouseenter = () => { if(c.id !== activeId) btn.style.background='#1f1f1f'; btn.style.color='white'; };
+      btn.onmouseleave = () => { if(c.id !== activeId) { btn.style.background=''; btn.style.color='#a3a3a3'; } };
+      btn.onclick = () => { activeId = c.id; render(); };
+      nav.appendChild(btn);
+    });
+  }
+
+  // Network status
+  const foot = el.appendChild(document.createElement('div'));
+  foot.className = 'px-3 pb-3 pt-3';
+  foot.style.borderTop = '1px solid #2a2a2a';
+  const running = netStatus?.running ?? false;
+  const nodes   = netStatus?.nodes ?? 0;
+  foot.innerHTML = `<button id="btn-net"
+    class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors hover:bg-neutral-800" style="color:#a3a3a3">
+    <span style="width:8px;height:8px;border-radius:50%;background:${running?'#22c55e':'#555'};flex-shrink:0;display:inline-block"></span>
+    <span class="truncate">${running ? `Running (${nodes} node${nodes!==1?'s':''})` : 'Network stopped'}</span>
+  </button>`;
+  foot.querySelector('#btn-net').onclick = async () => {
+    netStatus = running ? await apiStop() : await apiStart();
+    render();
+  };
+
+  return el;
+}
+
+function chatPane() {
+  const el = document.createElement('main');
+  el.className = 'flex flex-col flex-1 min-w-0 h-full';
+
+  const conv = conversations.find(c => c.id === activeId);
+  const msgs = conv?.messages ?? [];
+
+  if(msgs.length === 0) {
+    // Empty state
+    const empty = document.createElement('div');
+    empty.className = 'flex-1 flex flex-col items-center justify-center gap-6 px-4';
+    empty.innerHTML = `
+      <div style="text-align:center">
+        <h1 style="font-size:1.5rem;font-weight:600;color:white;margin-bottom:8px">MoE Network</h1>
+        <p style="font-size:14px;color:#666">A decentralized mixture of expert models running locally</p>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:480px;width:100%">
+        ${SUGGESTIONS.map(s=>`<button class="suggestion px-4 py-3 rounded-xl text-sm text-left transition-colors"
+          style="border:1px solid #2a2a2a;background:#171717;color:#a3a3a3"
+          data-text="${s}">${s}</button>`).join('')}
+      </div>`;
+    empty.querySelectorAll('.suggestion').forEach(b => {
+      b.onmouseenter = () => { b.style.background='#1f1f1f'; b.style.color='white'; };
+      b.onmouseleave = () => { b.style.background='#171717'; b.style.color='#a3a3a3'; };
+      b.onclick = () => sendMessage(b.dataset.text);
+    });
+    el.appendChild(empty);
+  } else {
+    // Message list
+    const list = document.createElement('div');
+    list.id = 'msg-list';
+    list.className = 'flex-1 overflow-y-auto py-4';
+    msgs.forEach(m => list.appendChild(messageEl(m)));
+    el.appendChild(list);
+    setTimeout(() => list.scrollTo({top: list.scrollHeight, behavior:'smooth'}), 0);
+  }
+
+  el.appendChild(inputBar());
+  return el;
+}
+
+function messageEl(msg) {
+  const wrap = document.createElement('div');
+
+  if(msg.role === 'status') {
+    wrap.className = 'flex justify-center py-2';
+    wrap.innerHTML = `<span style="font-size:12px;color:#666;display:flex;align-items:center;gap:6px">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      &nbsp;${msg.content}</span>`;
+    return wrap;
+  }
+
+  if(msg.role === 'user') {
+    wrap.className = 'flex justify-end px-4 py-2';
+    const bubble = document.createElement('div');
+    bubble.style.cssText = 'max-width:75%;background:#262626;color:#ececec;border-radius:18px 18px 4px 18px;padding:10px 16px;font-size:14px;line-height:1.6';
+    bubble.textContent = msg.content;
+    wrap.appendChild(bubble);
+    return wrap;
+  }
+
+  // Assistant
+  wrap.className = 'px-4 py-3';
+  const inner = document.createElement('div');
+  inner.style.cssText = 'display:flex;gap:12px;max-width:768px;margin:0 auto';
+
+  // Avatar
+  inner.innerHTML = `<div style="width:28px;height:28px;border-radius:50%;background:#1e293b;border:1px solid #334155;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="9" stroke="#94a3b8" stroke-width="1.5"/>
+      <circle cx="12" cy="12" r="2" fill="#94a3b8"/>
+    </svg></div>`;
+
+  const body = document.createElement('div');
+  body.style.cssText = 'flex:1;min-width:0';
+
+  // Expert badges
+  if(msg.peers_queried?.length) {
+    const badges = document.createElement('div');
+    badges.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px';
+    msg.peers_queried.forEach(s => {
+      const expert = msg.experts?.find(e => e.specialty === s);
+      const b = document.createElement('span');
+      b.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:9999px;border:1px solid #2a2a2a;color:#888;background:#1a1a1a';
+      b.textContent = expert ? `${s} ${expert.confidence}/10` : s;
+      badges.appendChild(b);
+    });
+    body.appendChild(badges);
+  }
+
+  // Content
+  const content = document.createElement('div');
+  content.className = 'prose';
+  content.style.cssText = 'color:#ececec;font-size:14px;line-height:1.7';
+  content.innerHTML = marked.parse(msg.content);
+  body.appendChild(content);
+
+  if(msg.orchestrated_by) {
+    const foot = document.createElement('p');
+    foot.style.cssText = 'font-size:11px;color:#555;margin-top:8px';
+    foot.textContent = `Orchestrated by ${msg.orchestrated_by}`;
+    body.appendChild(foot);
+  }
+
+  inner.appendChild(body);
+  wrap.appendChild(inner);
+  return wrap;
+}
+
+function inputBar() {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:8px 16px 16px';
+
+  const box = document.createElement('div');
+  box.style.cssText = `display:flex;align-items:flex-end;gap:8px;
+    background:#1c1c1c;border:1px solid ${loading?'#2a2a2a':'#333'};
+    border-radius:16px;padding:12px 16px;
+    ${loading?'opacity:.7':''}`;
+
+  const ta = document.createElement('textarea');
+  ta.id = 'chat-input';
+  ta.rows = 1;
+  ta.placeholder = 'Message MoE Network';
+  ta.disabled = loading;
+  ta.style.cssText = 'flex:1;background:transparent;color:#ececec;font-size:14px;line-height:1.5;min-height:24px;max-height:200px;border:none;font-family:inherit';
+  ta.oninput = () => { ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,200)+'px'; };
+  ta.onkeydown = e => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); doSend(); } };
+
+  const btn = document.createElement('button');
+  btn.disabled = loading;
+  btn.style.cssText = `width:32px;height:32px;border-radius:50%;border:none;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+    background:${loading?'#2a2a2a':'#262626'};color:${loading?'#555':'#ececec'};transition:background .15s`;
+  btn.innerHTML = loading
+    ? `<svg style="animation:spin 1s linear infinite" width="14" height="14" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-opacity=".25"/>
+        <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+       </svg>`
+    : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <path d="M5 12h14M12 5l7 7-7 7"/>
+       </svg>`;
+  btn.onmouseenter = () => { if(!loading) btn.style.background='#333'; };
+  btn.onmouseleave = () => { if(!loading) btn.style.background='#262626'; };
+  btn.onclick = doSend;
+
+  box.appendChild(ta);
+  box.appendChild(btn);
+  wrap.appendChild(box);
+
+  const hint = document.createElement('p');
+  hint.style.cssText = 'text-align:center;font-size:11px;color:#444;margin-top:8px';
+  hint.textContent = 'Shift+Enter for new line · Responses synthesized from all experts';
+  wrap.appendChild(hint);
+
+  return wrap;
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+const SUGGESTIONS = [
+  'Explain quantum entanglement',
+  'Solve: x² + 5x + 6 = 0',
+  'Write a binary search in Python',
+  'What causes the northern lights?',
+];
+
+function newConversation() {
+  const c = { id: uid(), title: 'New Chat', messages: [] };
+  conversations.unshift(c);
+  activeId = c.id;
+  return c;
+}
+
+function doSend() {
+  const ta = document.getElementById('chat-input');
+  const text = ta?.value.trim();
+  if(!text || loading) return;
+  ta.value = '';
+  ta.style.height = 'auto';
+  sendMessage(text);
+}
+
+async function sendMessage(text) {
+  if(loading) return;
+
+  if(!activeId || !conversations.find(c => c.id === activeId)) newConversation();
+  const conv = conversations.find(c => c.id === activeId);
+
+  // Title from first message
+  if(conv.messages.length === 0) conv.title = text.length > 40 ? text.slice(0,40)+'…' : text;
+
+  conv.messages.push({ id:uid(), role:'user', content:text });
+
+  const asstId = uid();
+  conv.messages.push({ id:asstId, role:'status', content:'Thinking…' });
+
+  loading = true;
+  render();
+
+  const experts = [];
+  try {
+    for await(const ev of streamChat(text)) {
+      const msg = conv.messages.find(m => m.id === asstId);
+      if(!msg) break;
+      if(ev.type === 'status') {
+        msg.content = ev.text;
+      } else if(ev.type === 'expert') {
+        experts.push({ specialty:ev.specialty, confidence:ev.confidence, response:ev.response });
+      } else if(ev.type === 'answer') {
+        msg.role = 'assistant';
+        msg.content = ev.text;
+        msg.experts = experts;
+        msg.orchestrated_by = ev.orchestrated_by;
+        msg.peers_queried = ev.peers_queried;
+      } else if(ev.type === 'error') {
+        msg.role = 'assistant';
+        msg.content = `Error: ${ev.text}`;
+      }
+      // Live re-render just the message list
+      const list = document.getElementById('msg-list');
+      if(list) {
+        const lastMsg = conv.messages[conv.messages.length-1];
+        const existing = list.lastElementChild;
+        if(existing && ev.type !== 'answer') {
+          existing.replaceWith(messageEl(lastMsg));
+        } else {
+          render();
+        }
+        list.scrollTo({top:list.scrollHeight});
+      } else {
+        render();
+      }
+    }
+  } catch(err) {
+    const msg = conv.messages.find(m => m.id === asstId);
+    if(msg) { msg.role='assistant'; msg.content=`Connection error: ${err}`; }
+  }
+
+  loading = false;
+  render();
+}
+
+// ── Spin keyframe ─────────────────────────────────────────────────────────────
+const style = document.createElement('style');
+style.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+document.head.appendChild(style);
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  try { netStatus = await apiStatus(); } catch{}
+  render();
+  setInterval(async () => {
+    try { netStatus = await apiStatus(); render(); } catch{}
+  }, 5000);
+}
+
+init();
+</script>
+</body>
+</html>

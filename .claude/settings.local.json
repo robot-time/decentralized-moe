@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh pr create --title 'fix TypeError when _label called with explicit bg kwarg' --body ' *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(ollama list *)",
+      "Bash(netstat -ano)",
+      "Bash(pip install *)",
+      "Bash(npm install *)",
+      "PowerShell(node --version)",
+      "PowerShell(npm --version)",
+      "Bash(python -c \"import api_server; print\\('imports OK'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git tag *)"
+    ]
+  }
+}

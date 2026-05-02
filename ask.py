@@ -20,7 +20,32 @@ If that node goes down, just point ask.py at a different one.
 """
 
 import sys
+import time
 import requests
+
+
+def _wait_for_node(base_url: str, retries: int = 6, delay: float = 2.0):
+    """Return health dict once the node responds, or None after retries."""
+    for attempt in range(retries):
+        try:
+            return requests.get(f"{base_url}/health", timeout=5).json()
+        except Exception:
+            if attempt == 0:
+                print(f"Waiting for node at {base_url} to start", end="", flush=True)
+            else:
+                print(".", end="", flush=True)
+            time.sleep(delay)
+    print()
+    return None
+
+
+def _pause_and_exit(code: int = 1) -> None:
+    """Keep the terminal open so the user can read the error."""
+    try:
+        input("\nPress Enter to close...")
+    except (KeyboardInterrupt, EOFError):
+        pass
+    sys.exit(code)
 
 
 def main() -> None:
@@ -28,14 +53,16 @@ def main() -> None:
     base_url = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://localhost:8001"
     ask_url  = f"{base_url}/ask"
 
-    # Check the node is alive before starting the session
-    try:
-        health = requests.get(f"{base_url}/health", timeout=5).json()
-        node_label = f"{health.get('specialty', '?')} ({health.get('model', '?')})"
-    except Exception as e:
-        print(f"Could not reach node at {base_url}: {e}")
-        print("Make sure nodes are running:  ./start.sh")
-        sys.exit(1)
+    # Wait up to ~12 s for the node to come up (it takes a moment on first launch)
+    health = _wait_for_node(base_url)
+    if health is None:
+        print(f"\nCould not reach node at {base_url}.")
+        print("Make sure Ollama is installed and the network has started.")
+        print("Right-click the tray icon → Start Network, then try again.")
+        _pause_and_exit(1)
+
+    print()  # newline after the waiting dots
+    node_label = f"{health.get('specialty', '?')} ({health.get('model', '?')})"
 
     print()
     print("=" * 64)

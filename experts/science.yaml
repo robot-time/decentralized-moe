@@ -3,7 +3,7 @@
 # Good model choices: llama3:8b, gemma2:9b, mistral:7b, phi4:14b
 
 specialty: science
-model: llama3:8b
+model: llama3.2:latest
 http_port: 8004
 dht_port: 8472
 is_bootstrap: false
