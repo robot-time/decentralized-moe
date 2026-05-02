@@ -2,7 +2,7 @@
 app.py -- MoE Network desktop app (pywebview + HTML frontend)
 =============================================================
 Serves a local aiohttp web app that mimics the Ollama desktop UI,
-then opens it in a native pywebview window.  Thi s gives us the
+then opens it in a native pywebview window.  This gives us the
 Ollama aesthetic in a single installable executable.
 
 Endpoints:
@@ -20,6 +20,7 @@ import asyncio
 import sys
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 from aiohttp import web
@@ -30,6 +31,24 @@ from network import Network
 from specialist import Specialist
 
 _UI_DIR = Path(__file__).parent / "ui"
+
+
+@web.middleware
+async def _cors_middleware(request: web.Request, handler) -> web.Response:
+    """Allow pywebview-loaded HTML to call the API (any origin)."""
+    if request.method == "OPTIONS":
+        return web.Response(
+            status=200,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            },
+        )
+    response = await handler(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
 
 
 class AsyncWorker:
@@ -57,6 +76,9 @@ class WebApp:
         self.cfg = load()
         self.worker = AsyncWorker()
         self.network: Network | None = None
+        self._ready = threading.Event()
+
+    # ── Handlers ────────────────────────────────────────────────────────
 
     async def handle_index(self, request: web.Request) -> web.Response:
         html_path = _UI_DIR / "index.html"
@@ -78,7 +100,7 @@ class WebApp:
             "label":     expert.get("label") if expert else None,
             "model":     expert.get("model") if expert else None,
             "dht_port":  self.cfg.get("dht_port", 8468),
-            "version":   "1.3.0",
+            "version":   "1.4.0",
         })
 
     async def handle_config_get(self, request: web.Request) -> web.Response:
@@ -138,6 +160,43 @@ class WebApp:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=500)
 
+    # ── Startup ─────────────────────────────────────────────────────────
+
+    async def _run_server(self) -> None:
+        """Start the aiohttp server and DHT network inside the worker loop."""
+        app = web.Application(middlewares=[_cors_middleware])
+        app.router.add_get("/",             self.handle_index)
+        app.router.add_get("/api/health",  self.handle_health)
+        app.router.add_get("/api/config",  self.handle_config_get)
+        app.router.add_post("/api/config", self.handle_config_post)
+        app.router.add_get("/api/peers",   self.handle_peers)
+        app.router.add_post("/api/query",  self.handle_query)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 8765)
+        await site.start()
+        print("[server] listening on http://127.0.0.1:8765")
+
+        # Signal that the HTTP server is ready
+        self._ready.set()
+
+        # Now start DHT / specialist in the same loop
+        await self._start_network()
+
+        # Keep the coroutine alive so the loop doesn't drop it
+        await asyncio.Event().wait()
+
+    def _load_ui_html(self) -> str:
+        """Read the UI HTML so we can inject it directly into pywebview."""
+        html_path = _UI_DIR / "index.html"
+        if not html_path.exists():
+            html_path = BUNDLE_DIR / "ui" / "index.html"
+        try:
+            return html_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            return f"<html><body><h1>UI Error</h1><p>{exc}</p></body></html>"
+
     async def _start_network(self) -> None:
         cfg = self.cfg
         role = cfg.get("role", "user")
@@ -164,28 +223,37 @@ class WebApp:
             my_http_port=http_port,
         )
         await self.network.start()
+        print(f"[network] DHT listening on port {dht_port}")
 
-    def _run_server(self) -> None:
-        asyncio.set_event_loop(self.worker.loop)
-        app = web.Application()
-        app.router.add_get("/",             self.handle_index)
-        app.router.add_get("/api/health",  self.handle_health)
-        app.router.add_get("/api/config",  self.handle_config_get)
-        app.router.add_post("/api/config", self.handle_config_post)
-        app.router.add_get("/api/peers",   self.handle_peers)
-        app.router.add_post("/api/query",  self.handle_query)
-
-        runner = web.AppRunner(app)
-        self.worker.loop.run_until_complete(runner.setup())
-        site = web.TCPSite(runner, "127.0.0.1", 8765)
-        self.worker.loop.run_until_complete(site.start())
-        self.worker.loop.run_until_complete(self._start_network())
-        self.worker.loop.run_forever()
+    # ── Entry ───────────────────────────────────────────────────────────
 
     def run(self) -> None:
         self.worker.start()
-        time.sleep(0.3)
+        self.worker.submit(self._run_server())
+        print("[main] waiting for server to be ready...")
+        if not self._ready.wait(timeout=10):
+            print("[main] ERROR: server failed to start within 10 seconds")
+            sys.exit(1)
+        # Give the event loop one more tick
+        time.sleep(0.2)
+        # Poll the health endpoint to confirm HTTP is truly serving
+        if not self._poll_server():
+            print("[main] ERROR: server not responding to HTTP requests")
+            sys.exit(1)
+        print("[main] server ready, opening window")
         self._open_window()
+
+    def _poll_server(self) -> bool:
+        for _ in range(20):
+            try:
+                with urllib.request.urlopen(
+                    "http://127.0.0.1:8765/api/health", timeout=0.5
+                ) as resp:
+                    if resp.status == 200:
+                        return True
+            except Exception:
+                time.sleep(0.1)
+        return False
 
     def _open_window(self) -> None:
         try:
@@ -198,9 +266,10 @@ class WebApp:
                 time.sleep(1)
             return
 
-        webview.create_window(
+        html = self._load_ui_html()
+        win = webview.create_window(
             "MoE Network",
-            "http://127.0.0.1:8765",
+            html=html,
             width=1024,
             height=768,
             min_size=(720, 520),

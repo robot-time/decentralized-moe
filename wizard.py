@@ -410,6 +410,8 @@ class Wizard(tk.Tk):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             last_pct = 0
             for line in proc.stdout:
