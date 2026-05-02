@@ -43,7 +43,7 @@ import pystray
 import yaml
 from PIL import Image, ImageDraw
 
-from app_paths import APP_DIR
+from app_paths import APP_DIR, LOG_DIR, ensure_dirs
 from keepawake import KeepAwake
 from updater import Updater, get_launch_at_login, set_launch_at_login
 
@@ -132,6 +132,7 @@ class NodeManager:
     def __init__(self) -> None:
         self.processes: list[subprocess.Popen] = []
         self.yaml_paths: list[Path] = []
+        self._log_files: list = []
         self._lock = threading.Lock()
 
     @property
@@ -170,6 +171,7 @@ class NodeManager:
                          sorted(experts_dir.glob("*.yml"))
             self.yaml_paths = yaml_paths
 
+            ensure_dirs()
             for i, yaml_path in enumerate(yaml_paths):
                 # When frozen the executable IS the Python runtime.
                 # Pass --node <yaml> so main.py dispatches to node.py logic.
@@ -178,10 +180,21 @@ class NodeManager:
                 else:
                     cmd = [sys.executable, str(BASE_DIR / "node.py"), str(yaml_path)]
 
+                # Redirect stdout/stderr to a per-node log file so failures
+                # are debuggable. DEVNULL would hide every error.
+                log_path = LOG_DIR / f"node_{yaml_path.stem}.log"
+                log_file = open(log_path, "a", buffering=1, encoding="utf-8")
+                log_file.write(
+                    f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} starting "
+                    f"{yaml_path.stem} ===\n"
+                )
+                log_file.flush()
+                self._log_files.append(log_file)
+
                 proc = subprocess.Popen(
                     cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
                 )
                 self.processes.append(proc)
                 # Give the first node (bootstrap) time to open its DHT port
@@ -198,6 +211,12 @@ class NodeManager:
                 except subprocess.TimeoutExpired:
                     proc.kill()
             self.processes.clear()
+            for f in self._log_files:
+                try:
+                    f.close()
+                except Exception:
+                    pass
+            self._log_files.clear()
 
     def restart(self) -> None:
         self.stop()
@@ -347,6 +366,7 @@ class TrayApp:
 
             # Settings
             pystray.MenuItem("Open Settings", self._on_open_settings),
+            pystray.MenuItem("Open Log Folder", self._on_open_logs),
 
             pystray.Menu.SEPARATOR,
 
@@ -399,6 +419,16 @@ class TrayApp:
         else:
             # Source mode: run settings_ui.py directly
             subprocess.Popen([sys.executable, str(BASE_DIR / "settings_ui.py")])
+
+    def _on_open_logs(self, icon=None, item=None) -> None:
+        """Open the user's log folder in the OS file manager so they can debug."""
+        ensure_dirs()
+        if sys.platform == "win32":
+            os.startfile(str(LOG_DIR))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(LOG_DIR)])
+        else:
+            subprocess.Popen(["xdg-open", str(LOG_DIR)])
 
     def _on_quit(self, icon=None, item=None) -> None:
         self._stop_relay()
