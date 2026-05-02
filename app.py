@@ -28,7 +28,7 @@ from aiohttp import web
 from aggregator import aggregate, fan_out
 from config import BUNDLE_DIR, copy_default_experts, ensure_dirs, load, load_expert, save
 from keepawake import KeepAwake
-from network import Network
+from network import Network, Peer, _local_ip
 from specialist import Specialist
 
 _UI_DIR = Path(__file__).parent / "ui"
@@ -79,6 +79,7 @@ class WebApp:
         self.network: Network | None = None
         self._ready = threading.Event()
         self._keepawake = KeepAwake()
+        self._local_specialist_url: str | None = None
 
     # ── Handlers ────────────────────────────────────────────────────────
 
@@ -148,6 +149,18 @@ class WebApp:
 
         try:
             peers = await self.network.discover()
+            # Always include the local specialist so queries work even
+            # before the DHT peer list has propagated.
+            if self._local_specialist_url and not any(
+                p.url == self._local_specialist_url for p in peers
+            ):
+                expert = load_expert(self.cfg.get("role", "user"))
+                peers.insert(0, Peer(
+                    specialty=expert.get("specialty", self.cfg.get("role", "user")),
+                    label=expert.get("label", self.cfg.get("role", "user").upper()),
+                    url=self._local_specialist_url,
+                    last_seen=time.time(),
+                ))
             replies = await fan_out(peers, query)
             answer = aggregate(
                 query, replies,
@@ -216,6 +229,7 @@ class WebApp:
                 asyncio.create_task(spec.serve_forever())
                 my_specialty = spec.specialty
                 my_label = spec.label
+                self._local_specialist_url = f"http://{_local_ip()}:{http_port}"
 
         self.network = Network(
             dht_port=dht_port,

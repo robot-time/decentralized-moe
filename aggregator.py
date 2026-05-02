@@ -84,7 +84,7 @@ async def fan_out(
 # ── MoA synthesis ────────────────────────────────────────────────────────────
 
 def _is_match(reply: SpecialistReply) -> bool:
-    txt = reply.response.strip().upper()
+    txt = reply.response.strip().upper().replace(" ", "_")
     return (
         txt
         and not txt.startswith("ERROR")

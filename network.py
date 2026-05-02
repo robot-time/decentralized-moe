@@ -132,6 +132,7 @@ class Network:
             except Exception as exc:
                 print(f"[network] bootstrap to {self.bootstrap} failed: {exc}")
         self._running = True
+        await self._publish_self()  # ensure we appear in the peer list immediately
         asyncio.create_task(self._refresh_loop())
         # If no bootstrap, also do UDP LAN broadcast for local discovery
         if not self.bootstrap:
