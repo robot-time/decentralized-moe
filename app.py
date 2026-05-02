@@ -136,10 +136,34 @@ class WebApp:
         if self.network is None:
             return web.json_response([])
         peers = await self.network.discover()
-        return web.json_response([
-            {"specialty": p.specialty, "label": p.label, "url": p.url}
-            for p in peers
-        ])
+        local_url = self._local_specialist_url
+
+        import aiohttp
+        enriched = []
+        async with aiohttp.ClientSession() as session:
+            for p in peers:
+                is_local = bool(local_url and p.url == local_url)
+                health = {}
+                try:
+                    async with session.get(
+                        f"{p.url.rstrip('/')}/health",
+                        timeout=aiohttp.ClientTimeout(total=3),
+                    ) as resp:
+                        if resp.status == 200:
+                            health = await resp.json()
+                except Exception:
+                    pass
+                enriched.append({
+                    "specialty": p.specialty,
+                    "label": p.label,
+                    "url": p.url,
+                    "local": is_local,
+                    "host": p.url.replace("http://", "").replace("https://", "").split(":")[0],
+                    "model": health.get("model"),
+                    "version": health.get("version"),
+                    "status": "online" if health else "unreachable",
+                })
+        return web.json_response(enriched)
 
     async def handle_query(self, request: web.Request) -> web.Response:
         try:
@@ -182,12 +206,24 @@ class WebApp:
                 is_local = bool(local_url and r.url == local_url)
                 host = r.url.replace("http://", "").replace("https://", "").split(":")[0] if r.url else "unknown"
                 origins.append({"label": r.label, "local": is_local, "host": host})
+            # Raw replies for routing transparency
+            raw_replies = []
+            for r in replies:
+                is_local = bool(local_url and r.url == local_url)
+                raw_replies.append({
+                    "label": r.label,
+                    "response": r.response,
+                    "local": is_local,
+                    "host": r.url.replace("http://", "").replace("https://", "").split(":")[0] if r.url else "unknown",
+                    "matched": r.label in answer.consulted,
+                })
             return web.json_response({
                 "text":        answer.text,
                 "consulted":   answer.consulted,
                 "skipped":     answer.skipped,
                 "synthesised": answer.synthesised,
                 "origins":     origins,
+                "replies":     raw_replies,
             })
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=500)

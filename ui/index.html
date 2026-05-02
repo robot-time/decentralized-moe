@@ -80,16 +80,31 @@
   }
   .peer-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     padding: 8px 10px;
     border-radius: 6px;
     font-size: 13px;
     color: var(--fg-dim);
     cursor: default;
+    margin-bottom: 2px;
   }
   .peer-item:hover { background: var(--surface-2); }
-  .peer-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+  .peer-item.local { border-left: 2px solid var(--specialist); }
+  .peer-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); flex-shrink: 0; margin-top: 5px; }
+  .peer-dot.offline { background: var(--error); }
+  .peer-info { flex: 1; min-width: 0; }
+  .peer-name { font-weight: 600; color: var(--fg); }
+  .peer-meta { font-size: 11px; color: var(--fg-muted); margin-top: 1px; }
+  .peer-host { font-size: 11px; color: var(--specialist); }
+  .section-header {
+    padding: 16px 16px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
   .role-info {
     padding: 10px 16px;
     font-size: 11px;
@@ -488,6 +503,37 @@ function addAiBubble(text, label, origins) {
   scrollBottom();
 }
 
+function addSkipBubble(label, response, isLocal, host) {
+  welcome.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'msg msg-ai';
+  const origin = isLocal ? 'this device' : host;
+  const short = response.length > 60 ? response.slice(0, 60) + '…' : response;
+  div.innerHTML = `
+    <div class="avatar" style="background:var(--fg-muted);">${label[0].toUpperCase()}</div>
+    <div class="content">
+      <div class="label" style="color:var(--fg-muted);">${escapeHtml(label)} · skipped</div>
+      <div class="origin" style="font-size:11px;color:var(--fg-muted);margin-bottom:4px;">From ${escapeHtml(origin)}</div>
+      <div class="bubble" style="border-color:var(--fg-muted);color:var(--fg-muted);font-size:13px;">${escapeHtml(short)}</div>
+    </div>`;
+  chat.appendChild(div);
+  scrollBottom();
+}
+
+function addSynthesisBubble(text, consulted) {
+  welcome.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'msg msg-ai';
+  div.innerHTML = `
+    <div class="avatar" style="background:var(--accent);color:var(--accent-fg);">M</div>
+    <div class="content">
+      <div class="label">Synthesised · ${escapeHtml(consulted.join(', '))}</div>
+      <div class="bubble">${escapeHtml(text)}</div>
+    </div>`;
+  chat.appendChild(div);
+  scrollBottom();
+}
+
 function addInfo(text) {
   welcome.style.display = 'none';
   const div = document.createElement('div');
@@ -534,13 +580,22 @@ async function sendMessage() {
     chat.querySelectorAll('.msg-info').forEach(el => {
       if (el.textContent.includes('Routing')) el.remove();
     });
-    if (data.consulted && data.consulted.length) {
-      addAiBubble(data.text, data.consulted.join(', '), data.origins);
-    } else {
-      addAiBubble(data.text, 'MoE', data.origins);
+    // Show routing transparency: each individual specialist reply
+    if (data.replies && data.replies.length) {
+      for (const r of data.replies) {
+        const origin = [{ label: r.label, local: r.local, host: r.host }];
+        if (r.matched) {
+          addAiBubble(r.response, r.label, origin);
+        } else {
+          addSkipBubble(r.label, r.response, r.local, r.host);
+        }
+      }
     }
-    if (data.skipped && data.skipped.length) {
-      addInfo('Skipped: ' + data.skipped.join(', '));
+    // If synthesis happened, show the combined answer
+    if (data.synthesised) {
+      addSynthesisBubble(data.text, data.consulted);
+    } else if (!data.consulted || !data.consulted.length) {
+      addAiBubble(data.text, 'MoE', data.origins);
     }
   } catch (e) {
     chat.querySelectorAll('.msg-info').forEach(el => {
@@ -637,7 +692,11 @@ async function loadUpdateInfo() {
     const res = await fetch('/api/update');
     updateData = await res.json();
     if (updateData.error) {
-      $('update-version').textContent = 'Unable to check';
+      let msg = 'Unable to check';
+      if (updateData.error.includes('403')) msg = 'Rate limited — try again soon';
+      else if (updateData.error.includes('404')) msg = 'No releases found';
+      else if (updateData.error.includes('HTTP')) msg = 'GitHub API error';
+      $('update-version').textContent = msg;
       $('update-actions').style.display = 'block';
       $('btn-check-update').style.display = 'block';
       $('btn-apply-update').style.display = 'none';
@@ -706,8 +765,17 @@ async function loadPeers() {
       if (seen.has(key)) continue;
       seen.add(key);
       const div = document.createElement('div');
-      div.className = 'peer-item';
-      div.innerHTML = `<div class="peer-dot"></div><div>${escapeHtml(p.label)}</div>`;
+      div.className = 'peer-item' + (p.local ? ' local' : '');
+      const dotClass = p.status === 'online' ? 'peer-dot' : 'peer-dot offline';
+      const modelInfo = p.model ? ` · ${escapeHtml(p.model)}` : '';
+      const hostInfo = p.local ? 'this device' : (p.host || 'unknown');
+      const versionInfo = p.version ? ` v${escapeHtml(p.version)}` : '';
+      div.innerHTML = `
+        <div class="${dotClass}"></div>
+        <div class="peer-info">
+          <div class="peer-name">${escapeHtml(p.label)}${versionInfo}</div>
+          <div class="peer-meta">${escapeHtml(hostInfo)}${modelInfo}</div>
+        </div>`;
       peersList.appendChild(div);
     }
   } catch (e) {
