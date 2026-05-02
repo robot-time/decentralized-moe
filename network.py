@@ -1,23 +1,18 @@
 """
 network.py -- DHT-based peer discovery for the MoE Network
 ============================================================
-Each node (specialist OR user-only client) joins a small Kademlia DHT.
-Specialist nodes register themselves under a well-known key.  Any node
-can read the list to find peers and call their /query endpoints.
+Each node joins a small Kademlia DHT.  Specialist nodes register themselves
+under a well-known key.  Any node can read the list to find peers and call
+their /query endpoints.
 
-This is the "works across multiple networks" piece — Kademlia gossips
-peer info via UDP, so as long as one bootstrap host is reachable from
-each device the network forms.
+This is the "works across multiple networks" piece — Kademlia gossips peer
+info via UDP, so as long as one bootstrap host is reachable from each device
+the network forms.
 
 Why DHT (not a centralised registry):
   - No single point of failure
   - No server to host
   - Scales as the network grows
-
-How to bootstrap across networks:
-  - The user sets `bootstrap: host:port` in ~/.moe-network/config.yaml,
-    pointing at the DHT port of any reachable participant.  Tailscale,
-    a VPS, or any port-forwarded home machine all work.
 """
 
 from __future__ import annotations
@@ -64,6 +59,7 @@ def _local_ip() -> str:
     """Best-effort local LAN IP (so peers reach us, not 127.0.0.1)."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(2)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
@@ -93,6 +89,10 @@ class Network:
         self.my_http_port  = my_http_port
         self._server       = Server()
         self._running      = False
+        # stable node id for deduplication (based on our listen address)
+        self._node_id      = (
+            f"{_local_ip()}:{my_http_port}" if my_http_port else None
+        )
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -114,7 +114,7 @@ class Network:
     # ── Register/refresh ──────────────────────────────────────────────────
 
     async def _refresh_loop(self) -> None:
-        """Re-publish our own entry every 30s so it stays in the DHT."""
+        """Re-publish our own entry every 30 s so it stays in the DHT."""
         while self._running:
             try:
                 await self._publish_self()
@@ -133,9 +133,10 @@ class Network:
             last_seen=time.time(),
         ).to_dict()
 
-        # Read-modify-write the shared peer list
+        # Read-modify-write the shared peer list (best-effort CAS)
         raw   = await self._server.get(PEER_LIST_KEY)
         peers = json.loads(raw) if raw else []
+        # Deduplicate by URL — last write wins for this node
         peers = [p for p in peers if p.get("url") != url]
         peers.append(entry)
         # Drop expired entries
@@ -160,5 +161,12 @@ class Network:
             return []
         cutoff = time.time() - PEER_TTL_SEC
         peers  = [p for p in peers if p.last_seen >= cutoff]
-        peers.sort(key=lambda p: p.last_seen, reverse=True)
-        return peers
+        # Deduplicate by URL (in case stale entries slipped in)
+        seen: set[str] = set()
+        unique: list[Peer] = []
+        for p in peers:
+            if p.url not in seen:
+                seen.add(p.url)
+                unique.append(p)
+        unique.sort(key=lambda p: p.last_seen, reverse=True)
+        return unique

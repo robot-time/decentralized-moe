@@ -3,10 +3,11 @@ config.py -- User configuration for the MoE Network app
 ========================================================
 Single source of truth for: which role this device plays (stem / hass /
 user-only), where the bootstrap node lives, and what specialist YAMLs are
-available.  Lives in the user's home directory so it survives reinstalls.
+available.  Uses platform-native data directories so it survives reinstalls.
 
-  ~/.moe-network/config.yaml
-  ~/.moe-network/experts/*.yaml   (overrides for the bundled defaults)
+  Windows : %APPDATA%\\MoE-Network\\config.yaml
+  macOS   : ~/Library/Application Support/MoE-Network/config.yaml
+  Linux   : ~/.config/moe-network/config.yaml
 """
 
 from __future__ import annotations
@@ -19,6 +20,19 @@ import yaml
 
 # ── Locations ────────────────────────────────────────────────────────────────
 
+def _app_dir() -> Path:
+    """Platform-native user-writable directory."""
+    if sys.platform == "win32":
+        base = Path.home() / "AppData" / "Roaming"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path.home() / ".config"
+    d = base / "MoE-Network"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def _bundle_dir() -> Path:
     """Where bundled assets (default expert YAMLs) live."""
     if getattr(sys, "frozen", False):
@@ -26,7 +40,7 @@ def _bundle_dir() -> Path:
     return Path(__file__).parent
 
 
-APP_DIR     = Path.home() / ".moe-network"
+APP_DIR     = _app_dir()
 EXPERTS_DIR = APP_DIR / "experts"
 LOG_DIR     = APP_DIR / "logs"
 CONFIG_FILE = APP_DIR / "config.yaml"

@@ -1,15 +1,9 @@
-# Core network
+# Core network + async
 kademlia>=2.2.2
 aiohttp>=3.9.0
+
+# Local LLM client
 ollama>=0.2.0
+
+# Config parsing
 pyyaml>=6.0
-
-# Tray app + icon drawing
-pystray>=0.19.5
-Pillow>=10.0.0
-
-# macOS tray backend (pystray requires pyobjc on macOS)
-pyobjc>=9.0; sys_platform == "darwin"
-
-# Update system + ask.py
-requests>=2.31.0
