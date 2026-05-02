@@ -103,7 +103,7 @@ class WebApp:
             "label":     expert.get("label") if expert else None,
             "model":     expert.get("model") if expert else None,
             "dht_port":  self.cfg.get("dht_port", 8468),
-            "version":   "1.5.1",
+            "version":   "1.5.2",
         })
 
     async def handle_config_get(self, request: web.Request) -> web.Response:
